@@ -161,22 +161,38 @@ decay still fires first; this is purely a backstop.
 
 ## Configuration
 
-Written to `config/VoltzFixes.cfg` at mod init:
+All four patches are toggleable in `config/VoltzFixes.cfg`, written at mod init. Every
+option defaults to the fixed behaviour; set one to `false` to restore stock Atomic
+Science for that fix alone. No rebuild needed.
 
 ```
 general {
+    B:"Assembler Wears All Six Cells"=true
     B:"Disable Explosion Block Damage"=true
+    B:"Plasma Self Decay Backstop"=true
+    B:"Sync Accelerator Spawns To World Time"=true
 }
 ```
 
-`true` (default) — explosions do no block damage and drop no items. Entity knockback and
-damage are unchanged, so strange matter production is unaffected.
+| Option | `true` (default) | `false` |
+|---|---|---|
+| Assembler Wears All Six Cells | consumes all 6 cells | stock: slot 5 never wears |
+| Disable Explosion Block Damage | no block damage or drops; knockback intact | stock: blasts destroy blocks |
+| Plasma Self Decay Backstop | plasma ticks randomly, orphans still decay | stock: one scheduled tick only |
+| Sync Accelerator Spawns To World Time | one shared clock, placement order irrelevant | stock: per-machine counter |
 
-`false` — vanilla behaviour. Only sensible if a third injector suppresses the blast
-(see below); otherwise a correctly synced machine slowly eats its own electromagnets.
+The values are read at startup and logged, so you can confirm what is active:
 
-`syncspawn`, `plasma` and `assemblerwear` are not configurable — they are correctness
-fixes, not tuning.
+```
+[VoltzFixes] blastDamage=false syncSpawn=true plasmaDecay=true assemblerSlots=6
+```
+
+Note `blastDamage` is the internal inverse of the user-facing
+`Disable Explosion Block Damage`.
+
+Turning **Disable Explosion Block Damage** off is only sensible if a third injector
+suppresses the blast — otherwise a correctly synced accelerator detonates a survivor on
+its own electromagnet every cycle and the machine slowly eats itself.
 
 ---
 
@@ -192,13 +208,13 @@ Needs `javac` (any), a Java 8 `javac` for the config class, and ASM. Override th
 Individual patches:
 
 ```sh
-java -cp "$ASM:build/tool" PatchAS in.jar out.jar syncspawn,assemblerwear
-java -cp "$ASM:build/tool" PatchAS in.jar out.jar plasma,noblastdamage build/cls/atomicscience/fanwusu/VoltzFixConfig.class
+java -cp "$ASM:build/tool" PatchAS in.jar out.jar syncspawn,assemblerwear \
+     build/cls/atomicscience/fanwusu/VoltzFixConfig.class
 ```
 
-`noblastdamage` requires the compiled `VoltzFixConfig.class` as the fourth argument.
-The patcher throws if any selected patch fails to apply, so it never writes a jar that
-silently did nothing.
+The compiled `VoltzFixConfig.class` is always required as the fourth argument — every
+patch reads its settings from it. The patcher throws if any selected patch fails to
+apply, so it never writes a jar that silently did nothing.
 
 ## Install
 
