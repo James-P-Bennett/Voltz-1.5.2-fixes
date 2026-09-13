@@ -22,6 +22,9 @@ patch does not apply, so it can never write a jar that silently did nothing.
 
 ## Atomic Science v0.6.2.117
 
+<details>
+<summary><b>Four fixes, configuration, telemetry reference and gotchas</b></summary>
+
 Four fixes for particle accelerator, fusion reactor and Atomic Assembler bugs. The
 patcher rewrites five classes in `Atomic_Science_v0.6.2.117.jar` and adds one.
 
@@ -178,9 +181,104 @@ against a stock baseline of roughly 1 block per 16 knocks.
 
 ![The same accelerator intact after an explosion, with strange matter cells dropped nearby](media/blast-damage-after.png)
 
----
+### Configuration
+
+The four Atomic Science patches are toggleable in `config/VoltzFixes.cfg`, written at mod init. Every
+option defaults to the fixed behaviour; set one to `false` to restore stock Atomic
+Science for that fix alone. No rebuild needed.
+
+```
+general {
+    B:"Assembler Wears All Six Cells"=true
+    B:"Disable Explosion Block Damage"=true
+    B:"Plasma Self Decay Backstop"=true
+    B:"Sync Accelerator Spawns To World Time"=true
+}
+```
+
+| Option | `true` (default) | `false` |
+|---|---|---|
+| Assembler Wears All Six Cells | consumes all 6 cells | stock: slot 5 never wears |
+| Disable Explosion Block Damage | no block damage or drops; knockback intact | stock: blasts destroy blocks |
+| Plasma Self Decay Backstop | plasma ticks randomly, orphans still decay | stock: one scheduled tick only |
+| Sync Accelerator Spawns To World Time | one shared clock, placement order irrelevant | stock: per-machine counter |
+
+The values are read at startup and logged, so you can confirm what is active:
+
+```
+[VoltzFixes] blastDamage=false syncSpawn=true plasmaDecay=true assemblerSlots=6
+```
+
+Note `blastDamage` is the internal inverse of the user-facing
+`Disable Explosion Block Damage`.
+
+Turning **Disable Explosion Block Damage** off is only sensible if a third injector
+suppresses the blast — otherwise a correctly synced accelerator detonates a survivor on
+its own electromagnet every cycle and the machine slowly eats itself.
+
+### Known-good telemetry
+
+What a correctly running accelerator pair looks like — use this to diagnose:
+
+| Metric | Value |
+|---|---|
+| Spawn events | both accelerators, **same tick**, phase constant |
+| Collision separation | **0.20017**, identical every cycle |
+| Cycle length | **420 ticks** |
+| Knocks | **100%** of collisions, `0.07531 -> 0.59732` |
+| Survivor death | `suDu=0.59452`, on an electromagnet |
+| Output | ~1 strange matter cell per 2.7 min |
+
+Deviations and what they mean:
+
+- **540-tick solo cycle** — one accelerator is out of cobble. Hand-filled hoppers never
+  hold the same amount, so one always empties first and the other fires unpaired
+  particles into your machine. This is the most common real-world failure. Automate it.
+- **`dist` in the 0.377–0.700 range** — dead band. The collision is *detected* (box is
+  0.6 plus 0.1 entity half-width) but the impulse radius is `5 * suDu`, so below
+  `suDu 0.14` a collision can register with no knock at all. The particle is consumed
+  for nothing.
+- **`dist` above ~1.0 with `expl=true`** — the particle died alone.
+
+#### Tube geometry
+
+For two accelerators firing on the same tick, spawn centres `G` apart, straight corridor:
+
+```
+separation at check n:  d(n) = G - 0.0007 * n * (n+1)     n = 9, 19, 29, ...
+speed at check n:       s    = 0.0007 * n
+impulse radius:         R    = 5 * s
+```
+
+A knock happens only when `|d| < R`. Verified exactly: a 6.0 gap gives `d(89) = 0.393`
+against `R = 0.3115`, logged as `dist=0.39300` with **zero** knocks.
+
+- Gaps that knock: **4.5, 5.5, 7.0, 8.5, 10.0**
+- Gaps that phase through entirely: 11.0, 12.5, 14.5, 16.5, 17.0, 19.0, 21.0+
+
+Above gap 10 the 10-tick sampling can no longer keep up: the pair closes
+`0.0007 * (20n + 110)` per check against a 1.4-wide detection window, so past ~10 blocks
+of travel they can step clean over each other. **Longer is not better.**
+
+### Gotchas (not patched)
+
+- **Electromagnet glass collects no heat.** `BDianCiBuoLi.hasTileEntity()` returns
+  `false`, so it has no `TDianCiKe` and the `+100 °C` from adjacent plasma is silently
+  discarded. Only the **solid** electromagnet boils water. A containment built entirely
+  of glass gives a reactor that burns 20,000 W and deuterium forever at zero output with
+  no error anywhere. Deliberate, but undiscoverable. Left alone because changing it would
+  make glass strictly better than the solid block.
+- **`Math.min(motion, 1.0)` only caps positive motion.** Particles travelling west, north
+  or down are uncapped and sail past `suDu 1.0`, at which point the accelerator consumes
+  them for antimatter — remotely, with no return trip and **no explosion**. East, south
+  and up clamp at exactly 1.0 and can never convert.
+
+</details>
 
 ## MPS Addons 0.2.3
+
+<details>
+<summary><b>One fix — the item magnet</b></summary>
 
 One fix for the Modular Powersuits **Magnet** module. The patcher rewrites two classes in
 `MPSA-0.2.3-144_MPS-531+.jar` and adds one.
@@ -242,46 +340,12 @@ general {
 
 ![The Magnet module in the MPS tinker table, showing its description and 200J energy cost](media/magnet-module.png)
 
----
-
-## Configuration
-
-The four Atomic Science patches are toggleable in `config/VoltzFixes.cfg`, written at mod init. Every
-option defaults to the fixed behaviour; set one to `false` to restore stock Atomic
-Science for that fix alone. No rebuild needed.
-
-```
-general {
-    B:"Assembler Wears All Six Cells"=true
-    B:"Disable Explosion Block Damage"=true
-    B:"Plasma Self Decay Backstop"=true
-    B:"Sync Accelerator Spawns To World Time"=true
-}
-```
-
-| Option | `true` (default) | `false` |
-|---|---|---|
-| Assembler Wears All Six Cells | consumes all 6 cells | stock: slot 5 never wears |
-| Disable Explosion Block Damage | no block damage or drops; knockback intact | stock: blasts destroy blocks |
-| Plasma Self Decay Backstop | plasma ticks randomly, orphans still decay | stock: one scheduled tick only |
-| Sync Accelerator Spawns To World Time | one shared clock, placement order irrelevant | stock: per-machine counter |
-
-The values are read at startup and logged, so you can confirm what is active:
-
-```
-[VoltzFixes] blastDamage=false syncSpawn=true plasmaDecay=true assemblerSlots=6
-```
-
-Note `blastDamage` is the internal inverse of the user-facing
-`Disable Explosion Block Damage`.
-
-Turning **Disable Explosion Block Damage** off is only sensible if a third injector
-suppresses the blast — otherwise a correctly synced accelerator detonates a survivor on
-its own electromagnet every cycle and the machine slowly eats itself.
-
----
+</details>
 
 ## Build
+
+<details>
+<summary><b>Building the patched jars from a stock jar</b></summary>
 
 ```sh
 ./build.sh /path/to/Atomic_Science_v0.6.2.117.jar
@@ -301,7 +365,12 @@ The compiled `VoltzFixConfig.class` is always required as the fourth argument �
 patch reads its settings from it. The patcher throws if any selected patch fails to
 apply, so it never writes a jar that silently did nothing.
 
+</details>
+
 ## Install
+
+<details>
+<summary><b>Server-side install, and what changes inside each jar</b></summary>
 
 Server-side only. Drop the patched jars into the **server's** `mods/` folder, replacing
 the stock ones:
@@ -351,66 +420,7 @@ MPSA-0.2.3-144_MPS-531+-patched.jar
 
 Nothing else in either jar is touched — no ids, no recipes, no rendering, no packets.
 
----
-
-## Known-good telemetry
-
-What a correctly running accelerator pair looks like — use this to diagnose:
-
-| Metric | Value |
-|---|---|
-| Spawn events | both accelerators, **same tick**, phase constant |
-| Collision separation | **0.20017**, identical every cycle |
-| Cycle length | **420 ticks** |
-| Knocks | **100%** of collisions, `0.07531 -> 0.59732` |
-| Survivor death | `suDu=0.59452`, on an electromagnet |
-| Output | ~1 strange matter cell per 2.7 min |
-
-Deviations and what they mean:
-
-- **540-tick solo cycle** — one accelerator is out of cobble. Hand-filled hoppers never
-  hold the same amount, so one always empties first and the other fires unpaired
-  particles into your machine. This is the most common real-world failure. Automate it.
-- **`dist` in the 0.377–0.700 range** — dead band. The collision is *detected* (box is
-  0.6 plus 0.1 entity half-width) but the impulse radius is `5 * suDu`, so below
-  `suDu 0.14` a collision can register with no knock at all. The particle is consumed
-  for nothing.
-- **`dist` above ~1.0 with `expl=true`** — the particle died alone.
-
-### Tube geometry
-
-For two accelerators firing on the same tick, spawn centres `G` apart, straight corridor:
-
-```
-separation at check n:  d(n) = G - 0.0007 * n * (n+1)     n = 9, 19, 29, ...
-speed at check n:       s    = 0.0007 * n
-impulse radius:         R    = 5 * s
-```
-
-A knock happens only when `|d| < R`. Verified exactly: a 6.0 gap gives `d(89) = 0.393`
-against `R = 0.3115`, logged as `dist=0.39300` with **zero** knocks.
-
-- Gaps that knock: **4.5, 5.5, 7.0, 8.5, 10.0**
-- Gaps that phase through entirely: 11.0, 12.5, 14.5, 16.5, 17.0, 19.0, 21.0+
-
-Above gap 10 the 10-tick sampling can no longer keep up: the pair closes
-`0.0007 * (20n + 110)` per check against a 1.4-wide detection window, so past ~10 blocks
-of travel they can step clean over each other. **Longer is not better.**
-
----
-
-## Gotchas found along the way (not patched)
-
-- **Electromagnet glass collects no heat.** `BDianCiBuoLi.hasTileEntity()` returns
-  `false`, so it has no `TDianCiKe` and the `+100 °C` from adjacent plasma is silently
-  discarded. Only the **solid** electromagnet boils water. A containment built entirely
-  of glass gives a reactor that burns 20,000 W and deuterium forever at zero output with
-  no error anywhere. Deliberate, but undiscoverable. Left alone because changing it would
-  make glass strictly better than the solid block.
-- **`Math.min(motion, 1.0)` only caps positive motion.** Particles travelling west, north
-  or down are uncapped and sail past `suDu 1.0`, at which point the accelerator consumes
-  them for antimatter — remotely, with no return trip and **no explosion**. East, south
-  and up clamp at exactly 1.0 and can never convert.
+</details>
 
 ## Credits
 
