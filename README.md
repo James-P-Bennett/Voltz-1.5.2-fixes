@@ -11,7 +11,7 @@ patch does not apply, so it can never write a jar that silently did nothing.
 
 | Mod | Patches |
 |---|---|
-| [Atomic Science v0.6.2.117](#atomic-science-v062117) | `syncspawn` · `noblastdamage` · `assemblerwear` · `plasma` |
+| [Atomic Science v0.6.2.117](#atomic-science-v062117) | `assemblerwear` · `syncspawn` · `noblastdamage` · `plasma` |
 
 ---
 
@@ -20,7 +20,32 @@ patch does not apply, so it can never write a jar that silently did nothing.
 Four fixes for particle accelerator, fusion reactor and Atomic Assembler bugs. The
 patcher rewrites five classes in `Atomic_Science_v0.6.2.117.jar` and adds one.
 
-### 1. `syncspawn` — accelerators desync on placement
+### 1. `assemblerwear` — the Assembler only wears 5 of its 6 cells
+
+**The bug.** `TGouCheng.yong()` checks all six slots for a strange matter cell, then
+wears them in a loop that stops one short:
+
+```java
+if (nengYong()) {
+    for (int i = 0; i < 5; i++) {        // requires 6 cells, damages 5
+        if (containingItems[i] != null) {
+            containingItems[i].setItemDamage(containingItems[i].getItemDamage() + 1);
+            if (containingItems[i].getItemDamage() >= 64) containingItems[i] = null;
+        }
+    }
+```
+
+Slot 5's cell is checked for presence every cycle and never takes a point of damage, so
+it lasts forever. Real cost is **5 cells per 64 duplications instead of 6**.
+
+**The patch.** `iconst_5` -> `bipush 6` on the loop bound. Targeted by the `ICONST_5`
+immediately followed by `IF_ICMPGE` inside `yong()`; the build fails unless exactly one
+such site exists.
+
+This one is a correction **against** the player. It ships anyway — a bug is a bug, and
+a mod that asks for six cells should consume six.
+
+### 2. `syncspawn` — accelerators desync on placement
 
 **The bug.** `TJiaSuQi.ticks` starts at `0` when the TileEntity is *constructed*, and
 the particle spawn gate is:
@@ -60,7 +85,7 @@ monotonic counter and is *not* moved by `/time set` — verified, because the al
 Only the spawn gate is touched. It is identified by the `LDC 20L` that follows it, so the
 unrelated `ticks % 5` packet-send gate is left alone.
 
-### 2. `noblastdamage` — particle explosions destroy your machine
+### 3. `noblastdamage` — particle explosions destroy your machine
 
 **The bug.** A correctly running accelerator detonates a survivor on its own
 electromagnet **every single cycle**. Not an accident — normal operation:
@@ -98,7 +123,7 @@ against a stock baseline of roughly 1 block per 16 knocks.
 
 **Configurable** — see below. Default is damage off.
 
-### 3. `plasma` — stranded plasma is permanent and lethal
+### 4. `plasma` — stranded plasma is permanent and lethal
 
 **The bug.** `BDengLiZiTi` (plasma) gets exactly one decay tick, scheduled in
 `onBlockAdded`:
@@ -131,31 +156,6 @@ the magic one bypasses armour entirely.
 from the chunk every tick and cannot be lost, and `updateTick` unconditionally converts
 plasma to fire, so any orphan dies on its next random tick. The normal 35-tick scheduled
 decay still fires first; this is purely a backstop.
-
-### 4. `assemblerwear` — the Assembler only wears 5 of its 6 cells
-
-**The bug.** `TGouCheng.yong()` checks all six slots for a strange matter cell, then
-wears them in a loop that stops one short:
-
-```java
-if (nengYong()) {
-    for (int i = 0; i < 5; i++) {        // requires 6 cells, damages 5
-        if (containingItems[i] != null) {
-            containingItems[i].setItemDamage(containingItems[i].getItemDamage() + 1);
-            if (containingItems[i].getItemDamage() >= 64) containingItems[i] = null;
-        }
-    }
-```
-
-Slot 5's cell is checked for presence every cycle and never takes a point of damage, so
-it lasts forever. Real cost is **5 cells per 64 duplications instead of 6**.
-
-**The patch.** `iconst_5` -> `bipush 6` on the loop bound. Targeted by the `ICONST_5`
-immediately followed by `IF_ICMPGE` inside `yong()`; the build fails unless exactly one
-such site exists.
-
-This one is a correction **against** the player. It ships anyway — a bug is a bug, and
-a mod that asks for six cells should consume six.
 
 ---
 
