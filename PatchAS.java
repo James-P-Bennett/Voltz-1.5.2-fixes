@@ -44,10 +44,12 @@ public class PatchAS {
     static final String CFG_CLASS = "atomicscience/fanwusu/VoltzFixConfig";
     static final String CFG_FIELD = "blastDamage";
     static final String MAIN_CLASS = "atomicscience/ZhuYao";
+    static final String ASSEMBLER_CLASS = "atomicscience/TGouCheng";
     static String cfgClassFile;   // path to the compiled VoltzFixConfig.class to inject
 
-    static boolean doPlasma, doBlast, doSync;
+    static boolean doPlasma, doBlast, doSync, doWear;
     static boolean hitPlasma, hitBlast, hitSync, hitInit;
+    static int wearHits;
 
     public static void main(String[] args) throws Exception {
         if (args.length < 3) {
@@ -58,6 +60,7 @@ public class PatchAS {
             if (p.trim().equals("plasma")) doPlasma = true;
             else if (p.trim().equals("noblastdamage")) doBlast = true;
             else if (p.trim().equals("syncspawn")) doSync = true;
+            else if (p.trim().equals("assemblerwear")) doWear = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -76,6 +79,7 @@ public class PatchAS {
             if (doBlast  && n.equals(PARTICLE_CLASS + ".class")) d = patchBlast(d);
             if (doSync   && n.equals(ACCEL_CLASS + ".class")) d = patchSync(d);
             if (doBlast  && n.equals(MAIN_CLASS + ".class")) d = patchInitHook(d);
+            if (doWear   && n.equals(ASSEMBLER_CLASS + ".class")) d = patchWear(d);
             out.put(n, d);
         }
         zf.close();
@@ -89,6 +93,8 @@ public class PatchAS {
         if (doBlast  && !hitBlast)  throw new IllegalStateException("noblastdamage patch did not apply");
         if (doSync   && !hitSync)   throw new IllegalStateException("syncspawn patch did not apply");
         if (doBlast  && !hitInit)   throw new IllegalStateException("config init hook did not apply");
+        if (doWear   && wearHits != 1)
+            throw new IllegalStateException("assemblerwear expected exactly 1 site, found " + wearHits);
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
         for (Map.Entry<String, byte[]> en : out.entrySet()) {
@@ -203,6 +209,34 @@ public class PatchAS {
             m.instructions.insert(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "init", "()V", false));
             m.maxStack = Math.max(m.maxStack, 1);
             hitInit = true;
+        }
+        return write(cn);
+    }
+
+    /**
+     * Atomic Assembler off-by-one: TGouCheng.yong() checks all six cell slots for
+     * presence but its wear loop is `for (i = 0; i < 5; i++)`, so slot 5's strange
+     * matter cell is never damaged and lasts forever. Real cost is 5 cells per 64
+     * duplications instead of 6.
+     *
+     * Fix: iconst_5 -> bipush 6 on the loop bound. Targeted by the ICONST_5 that is
+     * immediately followed by IF_ICMPGE inside yong(); the build fails unless exactly
+     * one such site exists.
+     */
+    static byte[] patchWear(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object _o : cn.methods) {
+            MethodNode m = (MethodNode) _o;
+            if (!m.name.equals("yong") || !m.desc.equals("()V")) continue;
+            for (AbstractInsnNode insn : m.instructions.toArray()) {
+                if (insn.getOpcode() != Opcodes.ICONST_5) continue;
+                AbstractInsnNode nx = insn.getNext();
+                while (nx != null && (nx instanceof LabelNode || nx instanceof LineNumberNode || nx instanceof FrameNode))
+                    nx = nx.getNext();
+                if (nx == null || nx.getOpcode() != Opcodes.IF_ICMPGE) continue;
+                m.instructions.set(insn, new IntInsnNode(Opcodes.BIPUSH, 6));
+                wearHits++;
+            }
         }
         return write(cn);
     }

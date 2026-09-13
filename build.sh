@@ -22,5 +22,5 @@ javac -nowarn -cp "$ASM" -d build/tool PatchAS.java
 
 # 3. apply
 java -cp "$ASM:build/tool" PatchAS "$SRC" "$OUT" \
-     plasma,noblastdamage,syncspawn \
+     plasma,noblastdamage,syncspawn,assemblerwear \
      build/cls/atomicscience/fanwusu/VoltzFixConfig.class

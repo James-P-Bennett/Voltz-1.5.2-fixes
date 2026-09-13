@@ -2,12 +2,12 @@
 
 Bytecode patches for **Atomic Science v0.6.2.117** (Voltz, Minecraft 1.5.2).
 
-Three fixes for particle accelerator and fusion reactor bugs. Every claim below was
+Four fixes for particle accelerator, fusion reactor and Atomic Assembler bugs. Every claim below was
 verified by disassembling the shipped jars and by server-side telemetry captured on a
 1.5.2 Forge test server — not from memory, wikis, or guesswork. Where something is
 *not* proven, it says so.
 
-The patcher rewrites four classes and adds one. No source for Atomic Science was used
+The patcher rewrites five classes and adds one. No source for Atomic Science was used
 or required.
 
 ---
@@ -133,6 +133,31 @@ decay still fires first; this is purely a backstop.
 > server; the cause is unidentified. This patch makes the block self-healing whatever
 > the cause, which is why it ships despite that.
 
+### 4. `assemblerwear` — the Assembler only wears 5 of its 6 cells
+
+**The bug.** `TGouCheng.yong()` checks all six slots for a strange matter cell, then
+wears them in a loop that stops one short:
+
+```java
+if (nengYong()) {
+    for (int i = 0; i < 5; i++) {        // requires 6 cells, damages 5
+        if (containingItems[i] != null) {
+            containingItems[i].setItemDamage(containingItems[i].getItemDamage() + 1);
+            if (containingItems[i].getItemDamage() >= 64) containingItems[i] = null;
+        }
+    }
+```
+
+Slot 5's cell is checked for presence every cycle and never takes a point of damage, so
+it lasts forever. Real cost is **5 cells per 64 duplications instead of 6**.
+
+**The patch.** `iconst_5` -> `bipush 6` on the loop bound. Targeted by the `ICONST_5`
+immediately followed by `IF_ICMPGE` inside `yong()`; the build fails unless exactly one
+such site exists.
+
+This one is a correction **against** the player. It ships anyway — a bug is a bug, and
+a mod that asks for six cells should consume six.
+
 ---
 
 ## Configuration
@@ -151,7 +176,8 @@ damage are unchanged, so strange matter production is unaffected.
 `false` — vanilla behaviour. Only sensible if a third injector suppresses the blast
 (see below); otherwise a correctly synced machine slowly eats its own electromagnets.
 
-`syncspawn` and `plasma` are not configurable — neither changes balance.
+`syncspawn`, `plasma` and `assemblerwear` are not configurable — they are correctness
+fixes, not tuning.
 
 ---
 
@@ -167,7 +193,7 @@ Needs `javac` (any), a Java 8 `javac` for the config class, and ASM. Override th
 Individual patches:
 
 ```sh
-java -cp "$ASM:build/tool" PatchAS in.jar out.jar syncspawn
+java -cp "$ASM:build/tool" PatchAS in.jar out.jar syncspawn,assemblerwear
 java -cp "$ASM:build/tool" PatchAS in.jar out.jar plasma,noblastdamage build/cls/atomicscience/fanwusu/VoltzFixConfig.class
 ```
 
@@ -256,11 +282,6 @@ of travel they can step clean over each other. **Longer is not better.**
 - **Steam rises.** `zhuShui` scans *upward* from the boiling water block for the first
   `ISteamReceptor`, so the turbine must be in that column. The water itself may touch any
   of the magnet's six faces.
-- **The Atomic Assembler only wears 5 of its 6 cells.** `TGouCheng` checks all six slots
-  for presence (`for i < 6`) but the wear loop is `for i < 5`, so **slot 5's cell never
-  takes damage** and lasts forever. Real cost is 5 cells per 64 duplications, not 6. Left
-  alone deliberately: it is an off-by-one in the player's favour, and correcting it would
-  only make the Assembler more expensive.
 - **`Math.min(motion, 1.0)` only caps positive motion.** Particles travelling west, north
   or down are uncapped and sail past `suDu 1.0`, at which point the accelerator consumes
   them for antimatter — remotely, with no return trip and **no explosion**. East, south
