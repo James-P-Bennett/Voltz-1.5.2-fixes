@@ -38,3 +38,16 @@ if [ -f "$MPSA_SRC" ]; then
 else
   echo "skip: MPSA jar not found at $MPSA_SRC"
 fi
+
+# 5. MFFS - BalancedMFFS zone flags and logging
+MFFS_SRC="${MFFS_SRC:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/mods/MFFS_v3.1.0.175.jar}"
+if [ -f "$MFFS_SRC" ]; then
+  "$JAVAC8" -nowarn -source 1.6 -target 1.6 \
+    -bootclasspath /usr/lib/jvm/java-8-openjdk/jre/lib/rt.jar \
+    -cp "$MC:$GUAVA" -d build/cls src/mffs/BalancedMFFS.java 2>/dev/null
+  javac -nowarn -cp "$ASM" -d build/tool PatchMFFS.java
+  java -cp "$ASM:build/tool" PatchMFFS "$MFFS_SRC" "MFFS_v3.1.0.175-patched.jar" \
+       build/cls/mffs/BalancedMFFS.class
+else
+  echo "skip: MFFS jar not found at $MFFS_SRC"
+fi

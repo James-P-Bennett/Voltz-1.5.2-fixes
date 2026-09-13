@@ -17,6 +17,7 @@ patch does not apply, so it can never write a jar that silently did nothing.
 |---|---|
 | [Atomic Science v0.6.2.117](#atomic-science-v062117) | `assemblerwear` · `syncspawn` · `plasma` · `noblastdamage` |
 | [MPS Addons 0.2.3](#mps-addons-023) | `magnet` |
+| [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` |
 
 ---
 
@@ -317,6 +318,70 @@ general {
 ```
 
 ![The Magnet module in the MPS tinker table, showing its description and 200J energy cost](media/magnet-module.png)
+
+</details>
+
+---
+
+## MFFS 3.1.0 — BalancedMFFS
+
+<details>
+<summary><b>Zone flags and admin logging for interdiction matrices</b></summary>
+
+Anti-Personnel and Confiscate are useful but almost impossible to administrate, so
+servers tend to ban them outright. **BalancedMFFS** makes them governable instead:
+admins deny them where they cause trouble and get a console record of everything they do.
+
+### What the modules actually do
+
+Read off the bytecode, because neither is obvious in game:
+
+- **Anti-Personnel** strips the player's **entire inventory into the matrix**, then deals
+  `Integer.MAX_VALUE` damage. The victim's gear ends up inside the projector, not on the
+  ground.
+- **Confiscate** silently moves filtered stacks out of player inventories into the matrix.
+
+Neither leaves any trace, which is the real administrative problem.
+
+### Zone flags
+
+`config/BalancedMFFS.txt`, re-read within seconds of an edit — no restart, no commands:
+
+```
+world <dim> <flag>
+zone  <dim> <x1> <y1> <z1> <x2> <y2> <z2> <flag>
+
+world 0 mffs.antipersonnel
+zone  0 -200 0 -200 200 256 200 *
+```
+
+Flags: `mffs.antipersonnel` `mffs.confiscate` `mffs.antihostile` `mffs.antifriendly`
+`mffs.warn`, or `*` for all. Boxes are inclusive and accept corners in any order.
+
+Every interdiction module acts through `onDefend(IInterdictionMatrix, EntityLiving)`, and
+the base class's own body is `return false`. The guard returns false inside a denied zone,
+so a blocked module behaves exactly like one that chose not to act — no exception, no
+half-applied effect. The check uses the **entity's** position, so a player in a safe zone
+is protected wherever the matrix is.
+
+### Logging
+
+```
+[BalancedMFFS] matrix loaded at dim0 123,64,-77  modules: AntiPersonnel, Confiscate
+[BalancedMFFS] KILL  Steve at dim0 120,64,-75  by matrix dim0 123,64,-77  (inventory absorbed into matrix)
+[BalancedMFFS] CONFISCATE  Steve lost 12x Iron Ingot  at dim0 120,64,-75  to matrix dim0 123,64,-77
+```
+
+Kept quiet deliberately:
+
+- **Matrix load** is keyed on the TileEntity instance, which is rebuilt on each chunk
+  load, so it prints once per load — and only for a matrix actually carrying
+  Anti-Personnel or Confiscate.
+- **Kills** are hooked *after* the damage call, so only a real kill prints. `onDefend`
+  runs against every nearby entity every scan; logging there would flood the console.
+- **Confiscations** are hooked per stack, giving the real item and count.
+
+`logging off` in the config disables all of it.
 
 </details>
 
