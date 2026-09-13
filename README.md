@@ -12,6 +12,7 @@ patch does not apply, so it can never write a jar that silently did nothing.
 | Mod | Patches |
 |---|---|
 | [Atomic Science v0.6.2.117](#atomic-science-v062117) | `assemblerwear` · `syncspawn` · `plasma` · `noblastdamage` |
+| [MPS Addons 0.2.3](#mps-addons-023) | `magnet` |
 
 ---
 
@@ -175,9 +176,71 @@ against a stock baseline of roughly 1 block per 16 knocks.
 
 ---
 
+## MPS Addons 0.2.3
+
+One fix for the Modular Powersuits **Magnet** module. The patcher rewrites two classes in
+`MPSA-0.2.3-144_MPS-531+.jar` and adds one.
+
+### 1. `magnet` — the item magnet does nothing on a server
+
+**The bug.** The module's own tick does nothing but spend power:
+
+```java
+public void onPlayerTickActive(EntityPlayer player, ItemStack item) {
+    if (getPlayerEnergy(player) > computeModularProperty(item, "Energy Consumption"))
+        if (player.worldObj.getWorldTotalTime() % 20 == 0)
+            drainPlayerEnergy(player, computeModularProperty(item, "Energy Consumption"));
+}
+```
+
+The actual pulling lives in `ClientTickHandler`, and the server half
+(`CommonTickHandler.updateMagneticPlayer`) never moves an item — it walks every nearby
+item, computes `dx`, `dz` and a distance, then uses them only for a pickup check at
+range 1.0:
+
+```java
+double dx = player.posX - item.posX;
+double dz = player.posZ - item.posZ;
+if (sqrt(dx*dx + dz*dz) < 1.0) item.onCollideWithPlayer(player);
+```
+
+Item entity positions are **server authoritative**, so on a dedicated server the client's
+motion is overwritten by the next `EntityTracker` update and nothing moves — while the
+module keeps draining power. It works in singleplayer only because the client and the
+integrated server share one world object.
+
+**The patch.** Three assignments spliced in just before that pickup check, reusing the
+deltas the method already computed:
+
+```java
+item.motionX = VoltzMagnetConfig.pull(dx, dist);
+item.motionY = VoltzMagnetConfig.pull(player.posY - item.posY, dist);
+item.motionZ = VoltzMagnetConfig.pull(dz, dist);
+```
+
+The server now does the pulling and vanilla's tracker syncs it to every client. The
+pickup check is untouched, so an item pulled inside range 1.0 is collected as before.
+Anchored on the `onCollideWithPlayer` call rather than a byte offset, so it fails loudly
+if the method ever changes shape.
+
+Note that `dist` is **horizontal only** — the stock method never computes a Y component.
+An item directly overhead would divide by near-zero, so `pull` floors the divisor at 1.0
+and clamps each axis to the configured speed.
+
+Written to `config/VoltzFixes-MPSA.cfg`:
+
+```
+general {
+    B:"Server Side Item Magnet"=true
+    D:"Magnet Pull Speed"=0.35
+}
+```
+
+---
+
 ## Configuration
 
-All four patches are toggleable in `config/VoltzFixes.cfg`, written at mod init. Every
+The four Atomic Science patches are toggleable in `config/VoltzFixes.cfg`, written at mod init. Every
 option defaults to the fixed behaviour; set one to `false` to restore stock Atomic
 Science for that fix alone. No rebuild needed.
 
