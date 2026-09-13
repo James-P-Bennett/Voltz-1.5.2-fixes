@@ -388,5 +388,14 @@ Nothing else in either jar is touched — no ids, no recipes, no rendering, no p
 
 ## Credits
 
-Atomic Science by Calclavia. These are third-party patches, not affiliated with the
-original author.
+All patched mods are the work of their original authors. These are third-party patches,
+not affiliated with or endorsed by any of them.
+
+| Mod | Author |
+|---|---|
+| Atomic Science | Calclavia |
+| Andrew2448's Modular Powersuits Addon | Andrew2448 |
+| MachineMuse's Modular Powersuits | MachineMuse |
+
+The Magnet module patched here belongs to the **Addon**, not the base mod — Modular
+Powersuits is listed because the addon depends on it, and nothing in it is modified.
