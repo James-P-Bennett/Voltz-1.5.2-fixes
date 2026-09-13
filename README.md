@@ -38,12 +38,9 @@ if (nengYong()) {
 Slot 5's cell is checked for presence every cycle and never takes a point of damage, so
 it lasts forever. Real cost is **5 cells per 64 duplications instead of 6**.
 
-**The patch.** `iconst_5` -> `bipush 6` on the loop bound. Targeted by the `ICONST_5`
-immediately followed by `IF_ICMPGE` inside `yong()`; the build fails unless exactly one
-such site exists.
-
-This one is a correction **against** the player. It ships anyway — a bug is a bug, and
-a mod that asks for six cells should consume six.
+**The patch.** The loop bound becomes `VoltzFixConfig.assemblerSlots` — 6 when enabled,
+5 when not. Targeted by the `ICONST_5` immediately followed by `IF_ICMPGE` inside
+`yong()`; the build fails unless exactly one such site exists.
 
 ![Atomic Assembler mid-duplication with all six strange matter cells loaded](media/assembler-six-cells.png)
 
@@ -78,12 +75,13 @@ t=52275  suDu=0.15300  cell=1276/4/-76  dist=4.28307  expl=true    <- alone
 **The patch.** Gate on world time instead of the per-machine counter:
 
 ```
-before:  this.ticks % 20 == 0                   counter, zeroed at placement
-after:   world.getWorldTotalTime() % 20 == 0    one clock, shared by every accelerator
+before:  this.ticks % 20 == 0
+after:   VoltzFixConfig.spawnClock(world.getWorldTotalTime(), this.ticks) % 20 == 0
 ```
 
-Every accelerator in the world now spawns on the same tick regardless of placement
-order. **No restart is ever needed.** `getWorldTotalTime` (`func_82737_E`) is the
+`spawnClock` returns world time when the option is on and the original counter when it
+is off, so every accelerator shares one clock regardless of placement order.
+**No restart is ever needed.** `getWorldTotalTime` (`func_82737_E`) is the
 monotonic counter and is *not* moved by `/time set` — verified, because the alternative
 `func_72820_D` is the day clock.
 
@@ -123,8 +121,8 @@ that the armour multiply in `applyArmorCalculations` does not overflow to negati
 heal you. No armour helps. Fire immunity only selects a *different* damage source, and
 the magic one bypasses armour entirely.
 
-**The patch.** `setTickRandomly(true)` in the constructor. Random ticks are re-derived
-from the chunk every tick and cannot be lost, and `updateTick` unconditionally converts
+**The patch.** `setTickRandomly(VoltzFixConfig.plasmaDecay)` in the constructor. Random
+ticks are re-derived from the chunk every tick and cannot be lost, and `updateTick` unconditionally converts
 plasma to fire, so any orphan dies on its next random tick. The normal 35-tick scheduled
 decay still fires first; this is purely a backstop.
 
@@ -159,9 +157,9 @@ return newExplosion(e, x, y, z, size, false /*isFlaming*/, flag /*isSmoking*/);
 
 and `Explosion.doExplosionB` gates the **entire** block-destruction loop on it
 (`getfield b:Z` / `ifeq`), while entity damage and knockback happen in `doExplosionA`,
-which runs regardless. So flipping that one argument removes all block damage and block
-drops and leaves the knockback — which is the strange-matter production mechanism —
-completely intact.
+which runs regardless. The argument becomes `VoltzFixConfig.blastDamage`, so switching it
+off removes all block damage and block drops while leaving the knockback — which is the
+strange-matter production mechanism — completely intact.
 
 There is exactly **one** `createExplosion` call site in `EWuSu`, inside `explode()`, and
 every path reaches it (collision, `!canCunZai`, `isCollidedHorizontally`).
