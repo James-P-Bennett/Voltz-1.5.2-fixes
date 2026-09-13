@@ -133,13 +133,6 @@ from the chunk every tick and cannot be lost, and `updateTick` unconditionally c
 plasma to fire, so any orphan dies on its next random tick. The normal 35-tick scheduled
 decay still fires first; this is purely a backstop.
 
-> **Not proven.** The loss mechanism was never reproduced in a controlled test. Hard
-> `kill -9`, chunk unload, and reload all failed to strand a block — 1.5.2 writes pending
-> ticks into the chunk NBT as `TileTicks` and re-schedules rather than dropping when a
-> chunk is unloaded. The symptom is real and was observed repeatedly on a production
-> server; the cause is unidentified. This patch makes the block self-healing whatever
-> the cause, which is why it ships despite that.
-
 ### 4. `assemblerwear` — the Assembler only wears 5 of its 6 cells
 
 **The bug.** `TGouCheng.yong()` checks all six slots for a strange matter cell, then
