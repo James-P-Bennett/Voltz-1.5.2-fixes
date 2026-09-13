@@ -240,6 +240,8 @@ general {
 }
 ```
 
+![The Magnet module in the MPS tinker table, showing its description and 200J energy cost](media/magnet-module.png)
+
 ---
 
 ## Configuration
