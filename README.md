@@ -394,8 +394,14 @@ Kept quiet deliberately:
 ./build.sh /path/to/Atomic_Science_v0.6.2.117.jar
 ```
 
-Needs `javac` (any), a Java 8 `javac` for the config class, and ASM. Override the
-`ASM`, `MC`, `GUAVA`, `JAVAC8` env vars if your paths differ.
+Builds all three patched jars, skipping any whose source jar is missing. Needs `javac`
+(any version), a Java 8 `javac` for the helper classes, ASM, and `curl` on first run.
+
+Override paths with `MODS`, `AS_SRC`, `MPSA_SRC`, `MFFS_SRC`, `FORGE`, `ASM`, `JAVAC8`.
+
+Helper classes compile against the **Forge universal zip**, downloaded into `build/` once
+and cached — deliberately not against the launcher's `bin/minecraft.jar`, which PolyMC
+rewrites on every launch.
 
 Individual patches:
 
