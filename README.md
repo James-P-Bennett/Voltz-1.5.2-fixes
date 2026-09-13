@@ -1,18 +1,25 @@
 # Voltz 1.5.2 fixes
 
-Bytecode patches for **Atomic Science v0.6.2.117** (Voltz, Minecraft 1.5.2).
+Bug fixes for mods in the **Voltz** modpack (Minecraft 1.5.2), applied as bytecode
+patches to the shipped jars. No mod source is used or required.
 
-Four fixes for particle accelerator, fusion reactor and Atomic Assembler bugs. Every claim below was
-verified by disassembling the shipped jars and by server-side telemetry captured on a
-1.5.2 Forge test server — not from memory, wikis, or guesswork. Where something is
-*not* proven, it says so.
+Every claim in this document was verified by disassembling the jars and by server-side
+telemetry captured on a 1.5.2 Forge test server — not from memory, wikis, or guesswork.
+Where something is *not* proven, it says so.
 
-The patcher rewrites five classes and adds one. No source for Atomic Science was used
-or required.
+Each patch is selectable individually, and the patcher fails the build if a selected
+patch does not apply, so it can never write a jar that silently did nothing.
+
+| Mod | Patches |
+|---|---|
+| [Atomic Science v0.6.2.117](#atomic-science-v062117) | `syncspawn` · `noblastdamage` · `assemblerwear` · `plasma` |
 
 ---
 
-## The fixes
+## Atomic Science v0.6.2.117
+
+Four fixes for particle accelerator, fusion reactor and Atomic Assembler bugs. The
+patcher rewrites five classes in `Atomic_Science_v0.6.2.117.jar` and adds one.
 
 ### 1. `syncspawn` — accelerators desync on placement
 
