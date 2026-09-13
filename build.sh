@@ -1,53 +1,82 @@
 #!/usr/bin/env bash
-# Build the patched Atomic Science jar.
-#   ./build.sh <path-to-stock-Atomic_Science_v0.6.2.117.jar> [out.jar]
+# Build every patched jar.
+#
+#   ./build.sh                 build all mods found at the default paths
+#   ./build.sh <AS.jar>        override just the Atomic Science source jar
+#
+# Override any path with an env var:
+#   MODS  AS_SRC  MPSA_SRC  MFFS_SRC  FORGE  ASM  JAVAC8
+#
+# Helper classes are compiled against the Forge universal zip, NOT against the launcher's
+# bin/minecraft.jar - PolyMC rewrites that file on every launch, so a build depending on it
+# works right up until the next time the game starts. The zip is downloaded into build/ on
+# first run and cached.
 set -euo pipefail
-SRC="${1:?usage: ./build.sh <stock-AS.jar> [out.jar] [stock-MPSA.jar]}"
-OUT="${2:-Atomic_Science_v0.6.2.117-patched.jar}"
-MPSA_SRC="${3:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/mods/MPSA-0.2.3-144_MPS-531+.jar}"
-MPSA_OUT="MPSA-0.2.3-144_MPS-531+-patched.jar"
+
+MODS="${MODS:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/mods}"
+AS_SRC="${1:-${AS_SRC:-$MODS/Atomic_Science_v0.6.2.117.jar}}"
+MPSA_SRC="${MPSA_SRC:-$MODS/MPSA-0.2.3-144_MPS-531+.jar}"
+MFFS_SRC="${MFFS_SRC:-$MODS/MFFS_v3.1.0.175.jar}"
 
 ASM="${ASM:-$HOME/.local/share/PolyMC/libraries/org/ow2/asm/asm-all/5.0.3/asm-all-5.0.3.jar}"
-MC="${MC:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/bin/minecraft.jar}"
-GUAVA="${GUAVA:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/lib/guava-14.0-rc3.jar}"
 JAVAC8="${JAVAC8:-/usr/lib/jvm/java-8-openjdk/bin/javac}"
+FORGE_URL="https://maven.minecraftforge.net/net/minecraftforge/forge/1.5.2-7.8.1.737/forge-1.5.2-7.8.1.737-universal.zip"
+FORGE="${FORGE:-build/forge-1.5.2-universal.zip}"
 
-rm -rf build && mkdir -p build/cls build/tool
+rm -rf build/cls build/tool
+mkdir -p build/cls build/tool
 
-# 1. config holder, compiled to class version 50 to match the mod
-"$JAVAC8" -nowarn -source 1.6 -target 1.6 \
-  -bootclasspath /usr/lib/jvm/java-8-openjdk/jre/lib/rt.jar \
-  -cp "$MC:$GUAVA" -d build/cls src/atomicscience/fanwusu/VoltzFixConfig.java 2>/dev/null
+[ -f "$ASM" ]    || { echo "ASM not found at $ASM - set ASM=..." >&2; exit 1; }
+[ -x "$JAVAC8" ] || { echo "Java 8 javac not found at $JAVAC8 - set JAVAC8=..." >&2; exit 1; }
 
-# 2. the ASM patcher
-javac -nowarn -cp "$ASM" -d build/tool PatchAS.java
-
-# 3. apply
-java -cp "$ASM:build/tool" PatchAS "$SRC" "$OUT" \
-     plasma,noblastdamage,syncspawn,assemblerwear \
-     build/cls/atomicscience/fanwusu/VoltzFixConfig.class
-
-# 4. MPS Addons - item magnet
-if [ -f "$MPSA_SRC" ]; then
-  "$JAVAC8" -nowarn -source 1.6 -target 1.6 \
-    -bootclasspath /usr/lib/jvm/java-8-openjdk/jre/lib/rt.jar \
-    -cp "$MC:$GUAVA" -d build/cls src/andrew/powersuits/VoltzMagnetConfig.java 2>/dev/null
-  javac -nowarn -cp "$ASM" -d build/tool PatchMPSA.java
-  java -cp "$ASM:build/tool" PatchMPSA "$MPSA_SRC" "$MPSA_OUT" \
-       build/cls/andrew/powersuits/VoltzMagnetConfig.class
-else
-  echo "skip: MPSA jar not found at $MPSA_SRC"
+if [ ! -f "$FORGE" ]; then
+  echo "fetching Forge universal (once) -> $FORGE"
+  mkdir -p "$(dirname "$FORGE")"
+  curl -fsSL -o "$FORGE" "$FORGE_URL"
 fi
 
-# 5. MFFS - BalancedMFFS zone flags and logging
-MFFS_SRC="${MFFS_SRC:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/mods/MFFS_v3.1.0.175.jar}"
-if [ -f "$MFFS_SRC" ]; then
+# javac 8 warns that -source/-target 1.6 are obsolete. Filter only that noise -
+# never redirect the whole stream, or a real compile error disappears and set -e
+# kills the script with no explanation.
+compile8() {
   "$JAVAC8" -nowarn -source 1.6 -target 1.6 \
-    -bootclasspath /usr/lib/jvm/java-8-openjdk/jre/lib/rt.jar \
-    -cp "$MC:$GUAVA" -d build/cls src/mffs/BalancedMFFS.java 2>/dev/null
-  javac -nowarn -cp "$ASM" -d build/tool PatchMFFS.java
-  java -cp "$ASM:build/tool" PatchMFFS "$MFFS_SRC" "MFFS_v3.1.0.175-patched.jar" \
-       build/cls/mffs/BalancedMFFS.class
-else
-  echo "skip: MFFS jar not found at $MFFS_SRC"
-fi
+    -bootclasspath "$(dirname "$JAVAC8")/../jre/lib/rt.jar" \
+    -cp "$FORGE" -d build/cls "$1" 2>&1 \
+    | grep -vE 'bootstrap class path|source value 1\.6|target value 1\.6|options|deprecat' || true
+}
+
+# <label> <src jar> <out jar> <patcher.java> <helper class> [patch list]
+patch_one() {
+  local label="$1" src="$2" out="$3" tool="$4" helper="$5" patches="${6:-}"
+  if [ ! -f "$src" ]; then
+    echo "skip $label: source jar not found at $src"
+    return 0
+  fi
+  javac -nowarn -cp "$ASM" -d build/tool "$tool"
+  local cls="${tool%.java}"
+  if [ -n "$patches" ]; then
+    java -cp "$ASM:build/tool" "$cls" "$src" "$out" "$patches" "$helper"
+  else
+    java -cp "$ASM:build/tool" "$cls" "$src" "$out" "$helper"
+  fi
+}
+
+compile8 src/atomicscience/fanwusu/VoltzFixConfig.java
+compile8 src/andrew/powersuits/VoltzMagnetConfig.java
+compile8 src/mffs/BalancedMFFS.java
+
+for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
+         build/cls/andrew/powersuits/VoltzMagnetConfig.class \
+         build/cls/mffs/BalancedMFFS.class; do
+  [ -f "$f" ] || { echo "helper class missing after compile: $f" >&2; exit 1; }
+done
+
+patch_one "Atomic Science" "$AS_SRC"   "Atomic_Science_v0.6.2.117-patched.jar" \
+          PatchAS.java   build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
+          "plasma,noblastdamage,syncspawn,assemblerwear"
+
+patch_one "MPS Addons"     "$MPSA_SRC" "MPSA-0.2.3-144_MPS-531+-patched.jar" \
+          PatchMPSA.java build/cls/andrew/powersuits/VoltzMagnetConfig.class
+
+patch_one "MFFS"           "$MFFS_SRC" "MFFS_v3.1.0.175-patched.jar" \
+          PatchMFFS.java build/cls/mffs/BalancedMFFS.class
