@@ -105,31 +105,18 @@ The fusion reactor spawns plasma at metadata 7, so that is 35 ticks. **Nothing r
 it.** `onBlockAdded` never runs again for an existing block, and the only other scheduler
 is `onNeighborBlockChange`. If that pending entry is ever lost, the block is permanent.
 
-That matters because plasma is instant unconditional death:
-
-```java
-if (entity instanceof EntityLiving) {
-    if (entity.isImmuneToFire()) attackEntityFrom(<magic source>, 1073741823);
-    else                         attackEntityFrom(<fire source>,  1073741823);
-} else {
-    entity.setDead();     // non-living: items are DELETED, not dropped
-}
-```
-
-`1073741823` is `Integer.MAX_VALUE / 2` — large enough to kill anything, small enough
-that the armour multiply in `applyArmorCalculations` does not overflow to negative and
-heal you. No armour helps. Fire immunity only selects a *different* damage source, and
-the magic one bypasses armour entirely.
+That matters because touching plasma is instant death — no armour helps — and it deletes
+any item that falls into it rather than dropping it.
 
 **The patch.** `setTickRandomly(VoltzFixConfig.plasmaDecay)` in the constructor. Random
-ticks are re-derived from the chunk every tick and cannot be lost, and `updateTick` unconditionally converts
-plasma to fire, so any orphan dies on its next random tick. The normal 35-tick scheduled
-decay still fires first; this is purely a backstop.
+ticks are re-derived from the chunk every tick and cannot be lost, and `updateTick`
+unconditionally converts plasma to fire, so any orphan dies on its next random tick. The
+normal 35-tick scheduled decay still fires first; this is purely a backstop.
 
 ![Fusion reactor containment seen from below, packed with purple plasma blocks](media/plasma-containment.png)
 
-*Containment filled with plasma. Every purple block is instant unconditional death on
-contact, and stays that way indefinitely if its one scheduled decay tick is lost.*
+*Containment filled with plasma. Each of those blocks stays lethal indefinitely if its
+one scheduled decay tick is lost.*
 
 ### 4. `noblastdamage` — particle explosions destroy your machine
 
