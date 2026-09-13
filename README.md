@@ -45,6 +45,11 @@ such site exists.
 This one is a correction **against** the player. It ships anyway — a bug is a bug, and
 a mod that asks for six cells should consume six.
 
+![Atomic Assembler mid-duplication with all six strange matter cells loaded](media/assembler-six-cells.png)
+
+*All six cells loaded and wearing. Before the patch the bottom slot's cell sat at full
+durability forever while the other five ground down.*
+
 ### 2. `syncspawn` — accelerators desync on placement
 
 **The bug.** `TJiaSuQi.ticks` starts at `0` when the TileEntity is *constructed*, and
@@ -85,6 +90,10 @@ monotonic counter and is *not* moved by `/time set` — verified, because the al
 Only the spawn gate is touched. It is identified by the `LDC 20L` that follows it, so the
 unrelated `ticks % 5` packet-send gate is left alone.
 
+The before/after pair under [`noblastdamage`](#4-noblastdamage--particle-explosions-destroy-your-machine)
+shows the combined effect: a synced pair colliding cleanly, and nothing left standing when
+they don't.
+
 ### 3. `plasma` — stranded plasma is permanent and lethal
 
 **The bug.** `BDengLiZiTi` (plasma) gets exactly one decay tick, scheduled in
@@ -118,6 +127,11 @@ the magic one bypasses armour entirely.
 from the chunk every tick and cannot be lost, and `updateTick` unconditionally converts
 plasma to fire, so any orphan dies on its next random tick. The normal 35-tick scheduled
 decay still fires first; this is purely a backstop.
+
+![Fusion reactor containment seen from below, packed with purple plasma blocks](media/plasma-containment.png)
+
+*Containment filled with plasma. Every purple block is instant unconditional death on
+contact, and stays that way indefinitely if its one scheduled decay tick is lost.*
 
 ### 4. `noblastdamage` — particle explosions destroy your machine
 
@@ -156,6 +170,17 @@ every path reaches it (collision, `!canCunZai`, `isCollidedHorizontally`).
 against a stock baseline of roughly 1 block per 16 knocks.
 
 **Configurable** — see below. Default is damage off.
+
+**Before** — stock behaviour. The survivor detonates on the machine and takes the terrain
+with it:
+
+![A particle explosion has blown a crater through the ground beneath the accelerator](media/blast-damage-before.png)
+
+**After** — same machine, same explosion, `Disable Explosion Block Damage=true`. The blast
+still fires and still throws you; every block survives, and the strange matter cells it
+produced are on the grass:
+
+![The same accelerator intact after an explosion, with strange matter cells dropped nearby](media/blast-damage-after.png)
 
 ---
 
