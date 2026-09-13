@@ -11,7 +11,7 @@ patch does not apply, so it can never write a jar that silently did nothing.
 
 | Mod | Patches |
 |---|---|
-| [Atomic Science v0.6.2.117](#atomic-science-v062117) | `assemblerwear` · `syncspawn` · `noblastdamage` · `plasma` |
+| [Atomic Science v0.6.2.117](#atomic-science-v062117) | `assemblerwear` · `syncspawn` · `plasma` · `noblastdamage` |
 
 ---
 
@@ -85,7 +85,41 @@ monotonic counter and is *not* moved by `/time set` — verified, because the al
 Only the spawn gate is touched. It is identified by the `LDC 20L` that follows it, so the
 unrelated `ticks % 5` packet-send gate is left alone.
 
-### 3. `noblastdamage` — particle explosions destroy your machine
+### 3. `plasma` — stranded plasma is permanent and lethal
+
+**The bug.** `BDengLiZiTi` (plasma) gets exactly one decay tick, scheduled in
+`onBlockAdded`:
+
+```java
+world.scheduleBlockUpdate(x, y, z, blockID, getBlockMetadata(world) * 5);
+```
+
+The fusion reactor spawns plasma at metadata 7, so that is 35 ticks. **Nothing re-arms
+it.** `onBlockAdded` never runs again for an existing block, and the only other scheduler
+is `onNeighborBlockChange`. If that pending entry is ever lost, the block is permanent.
+
+That matters because plasma is instant unconditional death:
+
+```java
+if (entity instanceof EntityLiving) {
+    if (entity.isImmuneToFire()) attackEntityFrom(<magic source>, 1073741823);
+    else                         attackEntityFrom(<fire source>,  1073741823);
+} else {
+    entity.setDead();     // non-living: items are DELETED, not dropped
+}
+```
+
+`1073741823` is `Integer.MAX_VALUE / 2` — large enough to kill anything, small enough
+that the armour multiply in `applyArmorCalculations` does not overflow to negative and
+heal you. No armour helps. Fire immunity only selects a *different* damage source, and
+the magic one bypasses armour entirely.
+
+**The patch.** `setTickRandomly(true)` in the constructor. Random ticks are re-derived
+from the chunk every tick and cannot be lost, and `updateTick` unconditionally converts
+plasma to fire, so any orphan dies on its next random tick. The normal 35-tick scheduled
+decay still fires first; this is purely a backstop.
+
+### 4. `noblastdamage` — particle explosions destroy your machine
 
 **The bug.** A correctly running accelerator detonates a survivor on its own
 electromagnet **every single cycle**. Not an accident — normal operation:
@@ -122,40 +156,6 @@ every path reaches it (collision, `!canCunZai`, `isCollidedHorizontally`).
 against a stock baseline of roughly 1 block per 16 knocks.
 
 **Configurable** — see below. Default is damage off.
-
-### 4. `plasma` — stranded plasma is permanent and lethal
-
-**The bug.** `BDengLiZiTi` (plasma) gets exactly one decay tick, scheduled in
-`onBlockAdded`:
-
-```java
-world.scheduleBlockUpdate(x, y, z, blockID, getBlockMetadata(world) * 5);
-```
-
-The fusion reactor spawns plasma at metadata 7, so that is 35 ticks. **Nothing re-arms
-it.** `onBlockAdded` never runs again for an existing block, and the only other scheduler
-is `onNeighborBlockChange`. If that pending entry is ever lost, the block is permanent.
-
-That matters because plasma is instant unconditional death:
-
-```java
-if (entity instanceof EntityLiving) {
-    if (entity.isImmuneToFire()) attackEntityFrom(<magic source>, 1073741823);
-    else                         attackEntityFrom(<fire source>,  1073741823);
-} else {
-    entity.setDead();     // non-living: items are DELETED, not dropped
-}
-```
-
-`1073741823` is `Integer.MAX_VALUE / 2` — large enough to kill anything, small enough
-that the armour multiply in `applyArmorCalculations` does not overflow to negative and
-heal you. No armour helps. Fire immunity only selects a *different* damage source, and
-the magic one bypasses armour entirely.
-
-**The patch.** `setTickRandomly(true)` in the constructor. Random ticks are re-derived
-from the chunk every tick and cannot be lost, and `updateTick` unconditionally converts
-plasma to fire, so any orphan dies on its next random tick. The normal 35-tick scheduled
-decay still fires first; this is purely a backstop.
 
 ---
 
