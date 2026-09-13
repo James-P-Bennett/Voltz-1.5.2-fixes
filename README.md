@@ -22,13 +22,11 @@ patch does not apply, so it can never write a jar that silently did nothing.
 
 ## Atomic Science v0.6.2.117
 
-<details>
-<summary><b>Four fixes, configuration, telemetry reference and gotchas</b></summary>
-
 Four fixes for particle accelerator, fusion reactor and Atomic Assembler bugs. The
 patcher rewrites five classes in `Atomic_Science_v0.6.2.117.jar` and adds one.
 
-### 1. `assemblerwear` — the Assembler only wears 5 of its 6 cells
+<details>
+<summary><b>1. <code>assemblerwear</code> — the Assembler only wears 5 of its 6 cells</b></summary>
 
 **The bug.** `TGouCheng.yong()` checks all six slots for a strange matter cell, then
 wears them in a loop that stops one short:
@@ -55,7 +53,10 @@ it lasts forever. Real cost is **5 cells per 64 duplications instead of 6**.
 *All six cells loaded and wearing. Before the patch the bottom slot's cell sat at full
 durability forever while the other five ground down.*
 
-### 2. `syncspawn` — accelerators desync on placement
+</details>
+
+<details>
+<summary><b>2. <code>syncspawn</code> — accelerators desync on placement</b></summary>
 
 **The bug.** `TJiaSuQi.ticks` starts at `0` when the TileEntity is *constructed*, and
 the particle spawn gate is:
@@ -96,11 +97,13 @@ monotonic counter and is *not* moved by `/time set` — verified, because the al
 Only the spawn gate is touched. It is identified by the `LDC 20L` that follows it, so the
 unrelated `ticks % 5` packet-send gate is left alone.
 
-The before/after pair under [`noblastdamage`](#4-noblastdamage--particle-explosions-destroy-your-machine)
-shows the combined effect: a synced pair colliding cleanly, and nothing left standing when
-they don't.
+The before/after pair in the `noblastdamage` section below shows the combined effect: a
+synced pair colliding cleanly, and nothing left standing when they don't.
 
-### 3. `plasma` — stranded plasma is permanent and lethal
+</details>
+
+<details>
+<summary><b>3. <code>plasma</code> — stranded plasma is permanent and lethal</b></summary>
 
 **The bug.** `BDengLiZiTi` (plasma) gets exactly one decay tick, scheduled in
 `onBlockAdded`:
@@ -135,7 +138,10 @@ normal 35-tick scheduled decay still fires first; this is purely a backstop.
 
 ![Fusion reactor containment seen from below, packed with purple plasma blocks](media/plasma-containment.png)
 
-### 4. `noblastdamage` — particle explosions destroy your machine
+</details>
+
+<details>
+<summary><b>4. <code>noblastdamage</code> — particle explosions destroy your machine</b></summary>
 
 **The bug.** A correctly running accelerator detonates a survivor on its own
 electromagnet **every single cycle**. Not an accident — normal operation:
@@ -181,7 +187,10 @@ against a stock baseline of roughly 1 block per 16 knocks.
 
 ![The same accelerator intact after an explosion, with strange matter cells dropped nearby](media/blast-damage-after.png)
 
-### Configuration
+</details>
+
+<details>
+<summary><b>Configuration</b></summary>
 
 The four Atomic Science patches are toggleable in `config/VoltzFixes.cfg`, written at mod init. Every
 option defaults to the fixed behaviour; set one to `false` to restore stock Atomic
@@ -216,7 +225,10 @@ Turning **Disable Explosion Block Damage** off is only sensible if a third injec
 suppresses the blast — otherwise a correctly synced accelerator detonates a survivor on
 its own electromagnet every cycle and the machine slowly eats itself.
 
-### Known-good telemetry
+</details>
+
+<details>
+<summary><b>Known-good telemetry</b></summary>
 
 What a correctly running accelerator pair looks like — use this to diagnose:
 
@@ -240,7 +252,7 @@ Deviations and what they mean:
   for nothing.
 - **`dist` above ~1.0 with `expl=true`** — the particle died alone.
 
-#### Tube geometry
+### Tube geometry
 
 For two accelerators firing on the same tick, spawn centres `G` apart, straight corridor:
 
@@ -260,7 +272,10 @@ Above gap 10 the 10-tick sampling can no longer keep up: the pair closes
 `0.0007 * (20n + 110)` per check against a 1.4-wide detection window, so past ~10 blocks
 of travel they can step clean over each other. **Longer is not better.**
 
-### Gotchas (not patched)
+</details>
+
+<details>
+<summary><b>Gotchas (not patched)</b></summary>
 
 - **Electromagnet glass collects no heat.** `BDianCiBuoLi.hasTileEntity()` returns
   `false`, so it has no `TDianCiKe` and the `+100 °C` from adjacent plasma is silently
@@ -274,11 +289,10 @@ of travel they can step clean over each other. **Longer is not better.**
   and up clamp at exactly 1.0 and can never convert.
 
 </details>
-
 ## MPS Addons 0.2.3
 
 <details>
-<summary><b>One fix — the item magnet</b></summary>
+<summary><b>Item magnet fix</b></summary>
 
 ### 1. `magnet` — never worked in multiplayer
 
