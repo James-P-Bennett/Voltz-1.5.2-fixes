@@ -5,7 +5,6 @@ patches to the shipped jars. No mod source is used or required.
 
 Every claim in this document was verified by disassembling the jars and by server-side
 telemetry captured on a 1.5.2 Forge test server — not from memory, wikis, or guesswork.
-Where something is *not* proven, it says so.
 
 Each patch is selectable individually, and the patcher fails the build if a selected
 patch does not apply, so it can never write a jar that silently did nothing.
@@ -271,17 +270,6 @@ of travel they can step clean over each other. **Longer is not better.**
   of glass gives a reactor that burns 20,000 W and deuterium forever at zero output with
   no error anywhere. Deliberate, but undiscoverable. Left alone because changing it would
   make glass strictly better than the solid block.
-- **Only three things stop plasma:** bedrock, iron blocks, and `IElectromagnet`. Plasma
-  *replaces* everything else — stone, water, cables, machines. A layer of iron blocks
-  outside the magnet shell is a free second line of defence.
-- **Never move plasma with a piston.** Spreading happens only in `onBlockAdded`, at 80%
-  per face across six faces (~4.8 children), and the parent never decrements its own
-  metadata. Re-placing it fires a fresh wave. Pushing an **electromagnet into** the plasma
-  is safe: it destroys the block outright with no `onBlockAdded`, no drops
-  (`idDropped` returns 0), and permanently seals the cell.
-- **Steam rises.** `zhuShui` scans *upward* from the boiling water block for the first
-  `ISteamReceptor`, so the turbine must be in that column. The water itself may touch any
-  of the magnet's six faces.
 - **`Math.min(motion, 1.0)` only caps positive motion.** Particles travelling west, north
   or down are uncapped and sail past `suDu 1.0`, at which point the accelerator consumes
   them for antimatter — remotely, with no return trip and **no explosion**. East, south

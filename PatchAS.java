@@ -16,8 +16,6 @@ import java.util.zip.*;
  *   Random ticks are re-derived from the chunk every tick and cannot be lost,
  *   and updateTick unconditionally converts the block to fire, so any orphan
  *   dies on its next random tick. The normal scheduled decay still fires first.
- *   NOTE: the loss mechanism was never reproduced in a controlled test. This is
- *   a backstop for an observed symptom, not a fix for a demonstrated cause.
  *
  * Patch "noblastdamage"  (atomicscience.fanwusu.EWuSu)
  *   Flips the last argument of the createExplosion call in explode() to false.
