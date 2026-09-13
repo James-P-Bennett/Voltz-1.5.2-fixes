@@ -73,7 +73,7 @@ public class PatchAS {
         zf.close();
 
         // the config holder is always injected - every patch reads it
-        out.put(CFG_CLASS + ".class", readAll(new FileInputStream(cfgClassFile)));
+        injectHelper(out, CFG_CLASS, cfgClassFile);
 
         if (doPlasma && !hitPlasma) throw new IllegalStateException("plasma patch did not apply");
         if (doBlast  && !hitBlast)  throw new IllegalStateException("noblastdamage patch did not apply");
@@ -245,6 +245,25 @@ public class PatchAS {
         while (n != null && (n instanceof LabelNode || n instanceof LineNumberNode
                 || n instanceof FrameNode)) n = n.getNext();
         return n;
+    }
+
+    /** inject a helper class plus any inner classes compiled alongside it */
+    static void injectHelper(Map<String, byte[]> out, String internalName, String classFile)
+            throws IOException {
+        out.put(internalName + ".class", readAll(new FileInputStream(classFile)));
+        File f = new File(classFile);
+        File dir = f.getParentFile();
+        String base = f.getName().substring(0, f.getName().length() - ".class".length());
+        File[] siblings = dir == null ? null : dir.listFiles();
+        if (siblings == null) return;
+        String pkg = internalName.contains("/")
+                ? internalName.substring(0, internalName.lastIndexOf('/') + 1) : "";
+        for (File s : siblings) {
+            String n = s.getName();
+            if (!n.startsWith(base + "$") || !n.endsWith(".class")) continue;
+            out.put(pkg + n, readAll(new FileInputStream(s)));
+            System.out.println("    + inner class " + pkg + n);
+        }
     }
 
     static ClassNode read(byte[] b) {
