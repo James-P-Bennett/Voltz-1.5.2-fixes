@@ -108,6 +108,18 @@ is `onNeighborBlockChange`. If that pending entry is ever lost, the block is per
 That matters because touching plasma is instant death — no armour helps — and it deletes
 any item that falls into it rather than dropping it.
 
+A stuck block also **deadlocks the reactor**. The spawn cell two blocks out from the
+reactor's facing side fails `canPlace`, so `spawn()` becomes a no-op — but the 20,000 W
+and the deuterium are consumed anyway. And the heat that drives the boiler is a one-shot
+`+100 °C` pulse delivered in `onBlockAdded`, so plasma merely sitting there contributes
+nothing: no new placements, no heat, no steam, no power. The reactor burns fuel forever
+at zero output with nothing anywhere reporting a fault.
+
+The only recovery in the stock mod is `onNeighborBlockChange` — changing a block next to
+the plasma schedules its decay. That means breaking into a containment full of something
+that kills you on contact, and opening the shell lets the plasma out: it spreads at 80%
+per face and **replaces** anything that isn't bedrock, an iron block, or an electromagnet.
+
 **The patch.** `setTickRandomly(VoltzFixConfig.plasmaDecay)` in the constructor. Random
 ticks are re-derived from the chunk every tick and cannot be lost, and `updateTick`
 unconditionally converts plasma to fire, so any orphan dies on its next random tick. The
