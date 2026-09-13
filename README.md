@@ -6,6 +6,10 @@ patches to the shipped jars. No mod source is used or required.
 Every claim in this document was verified by disassembling the jars and by server-side
 telemetry captured on a 1.5.2 Forge test server — not from memory, wikis, or guesswork.
 
+**These are server-side patches and they work against an unmodified Voltz client.**
+Install them on the server only. Players connect with the stock modpack, install nothing,
+and change nothing — every fix runs in server-side code.
+
 Each patch is selectable individually, and the patcher fails the build if a selected
 patch does not apply, so it can never write a jar that silently did nothing.
 
@@ -297,17 +301,53 @@ apply, so it never writes a jar that silently did nothing.
 
 ## Install
 
-Replace `Atomic_Science_v0.6.2.117.jar` in `mods/` with the patched jar.
+Server-side only. Drop the patched jars into the **server's** `mods/` folder, replacing
+the stock ones:
 
-**Server-side only is enough.** All three patches are server-side code:
+| Replace | With |
+|---|---|
+| `Atomic_Science_v0.6.2.117.jar` | `Atomic_Science_v0.6.2.117-patched.jar` |
+| `MPSA-0.2.3-144_MPS-531+.jar` | `MPSA-0.2.3-144_MPS-531+-patched.jar` |
+
+**Clients need no changes at all.** Players keep the unmodified Voltz pack — nothing to
+download, nothing to install, no launcher changes. Every patch lives in code that only
+runs on the server:
 
 - `scheduleBlockUpdate` is a no-op on the client
-- damage and knockback are server-authoritative
+- entity damage and knockback are server authoritative
 - `EWuSu.explode()` is entirely inside `if (!world.isRemote)`
+- the Assembler's wear loop runs on the tile entity
+- `CommonTickHandler` is the server half of the magnet; item positions are server
+  authoritative, which is the whole reason that fix is needed
 
-FML 1.5.2 compares modid and version strings, not file hashes, so a patched server
-accepts stock clients with no complaint. Verified: a stock client connected to a patched
-server with no mod-mismatch.
+FML 1.5.2 matches mods on modid and version strings, not file hashes, and neither is
+changed by these patches — so a patched server accepts stock clients with no mod-mismatch
+screen. **Verified:** an unmodified client connected to a fully patched server and every
+fix behaved correctly, including ones with visible client-side effects like items flying
+toward the player.
+
+Both patched jars keep their original mod id and version, so they can be rolled back by
+swapping the stock jars back in. Every fix can also be turned off individually in its
+config file without replacing anything.
+
+What actually changes inside each jar, for review:
+
+```
+Atomic_Science_v0.6.2.117-patched.jar
+  added   atomicscience/fanwusu/VoltzFixConfig.class
+  changed atomicscience/TGouCheng.class            assembler wear loop bound
+          atomicscience/fanwusu/TJiaSuQi.class      spawn clock
+          atomicscience/fanwusu/EWuSu.class         explosion isSmoking flag
+          atomicscience/hecheng/BDengLiZiTi.class   setTickRandomly
+          atomicscience/ZhuYao.class                config init hook in preInit
+
+MPSA-0.2.3-144_MPS-531+-patched.jar
+  added   andrew/powersuits/VoltzMagnetConfig.class
+  changed andrew/powersuits/tick/CommonTickHandler.class   server-side item pull
+          andrew/powersuits/common/CommonProxy.class       config init hook
+```
+
+Nothing else in either jar is touched — no ids, no recipes, no rendering, no packets.
 
 ---
 
