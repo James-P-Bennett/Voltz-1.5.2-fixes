@@ -127,9 +127,6 @@ normal 35-tick scheduled decay still fires first; this is purely a backstop.
 
 ![Fusion reactor containment seen from below, packed with purple plasma blocks](media/plasma-containment.png)
 
-*Containment filled with plasma. Each of those blocks stays lethal indefinitely if its
-one scheduled decay tick is lost.*
-
 ### 4. `noblastdamage` — particle explosions destroy your machine
 
 **The bug.** A correctly running accelerator detonates a survivor on its own
@@ -168,14 +165,11 @@ against a stock baseline of roughly 1 block per 16 knocks.
 
 **Configurable** — see below. Default is damage off.
 
-**Before** — stock behaviour. The survivor detonates on the machine and takes the terrain
-with it:
+**Before**
 
 ![A particle explosion has blown a crater through the ground beneath the accelerator](media/blast-damage-before.png)
 
-**After** — same machine, same explosion, `Disable Explosion Block Damage=true`. The blast
-still fires and still throws you; every block survives, and the strange matter cells it
-produced are on the grass:
+**After**
 
 ![The same accelerator intact after an explosion, with strange matter cells dropped nearby](media/blast-damage-after.png)
 
