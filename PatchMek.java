@@ -42,6 +42,10 @@ public class PatchMek {
     static final String MAIN         = C + "Mekanism";
     static final String FIX          = C + "VoltzMekanism";
     static final String TIME         = C + "BalancedTimeItems";
+    static final String TE_CUBE      = C + "TileEntityEnergyCube";
+    static final String CABLE_UTILS  = C + "CableUtils";
+    static final String ENERGY_NET   = C + "EnergyNetwork";
+    static final String HOOKS        = C + "MekanismHooks";
     static final String[] ROBIT_CONTAINERS = {
         C + "ContainerRobitMain", C + "ContainerRobitInventory", C + "ContainerRobitSmelting",
     };
@@ -69,7 +73,7 @@ public class PatchMek {
             System.exit(2);
         }
         List<String> known = Arrays.asList("chestcrash", "chestdupe", "chestremote", "machinedupe",
-                "robitdupe", "tntdupe", "tntsource", "timeitems");
+                "robitdupe", "tntdupe", "tntsource", "timeitems", "aebridge", "cablereload");
         for (String p : args[2].split(",")) {
             p = p.trim();
             if (!known.contains(p)) throw new IllegalArgumentException("unknown patch: " + p);
@@ -102,6 +106,11 @@ public class PatchMek {
         sites.put("tntdupe",     new String[] { "tntdupe.drop" });
         sites.put("tntsource",   new String[] { "tntsource.exploder" });
         sites.put("timeitems",   new String[] { "timeitems." + PKT_TIME, "timeitems." + PKT_WEATHER, "timeitems.init" });
+        sites.put("aebridge",    new String[] { "aebridge." + TE_CUBE + ".onUpdate",
+                                                "aebridge." + CABLE_UTILS + ".getConnectedEnergyAcceptors",
+                                                "aebridge." + ENERGY_NET + ".getEnergyAcceptors",
+                                                "aebridge." + ENERGY_NET + ".emit" });
+        sites.put("cablereload", new String[] { "cablereload.tick" });
         for (String p : selected)
             for (String s : sites.get(p))
                 if (!applied.contains(s)) throw new IllegalStateException(p + " did not apply: " + s);
@@ -135,7 +144,86 @@ public class PatchMek {
         if ((cls.equals(PKT_TIME) || cls.equals(PKT_WEATHER)) && selected.contains("timeitems"))
             return patchTimePacket(in, cls, cls.equals(PKT_TIME) ? 0 : 1);
         if (cls.equals(MAIN) && selected.contains("timeitems"))         return patchInitHook(in);
+        if (selected.contains("aebridge")
+                && (cls.equals(TE_CUBE) || cls.equals(CABLE_UTILS) || cls.equals(ENERGY_NET)))
+            in = patchAeBridge(in, cls);
+        if (selected.contains("cablereload") && cls.equals(ENERGY_NET))
+            in = patchCableReload(in);
         return in;
+    }
+
+    /**
+     * cablereload: the energy network's acceptor set (possibleAcceptors) is filled only by
+     * refresh(); cables never tick (canUpdate() is false); and after a chunk unload/reload it is
+     * not reliably rebuilt for an acceptor that loads on a different schedule than the cable - so
+     * a working cable-to-AE link silently dies until a neighbouring block is changed. The network
+     * itself is ticked by EnergyNetworkRegistry, so at the top of EnergyNetwork.tick() insert
+     *
+     *     if (VoltzMekanism.shouldRefreshNetwork(this)) this.refresh();
+     *
+     * which re-scans acceptors every few seconds and heals the link.
+     */
+    static byte[] patchCableReload(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("tick") || !m.desc.equals("()V")) continue;
+            LabelNode skip = new LabelNode();
+            InsnList g = new InsnList();
+            g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, FIX, "shouldRefreshNetwork",
+                    "(Ljava/lang/Object;)Z", false));
+            g.add(new JumpInsnNode(Opcodes.IFEQ, skip));
+            g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, ENERGY_NET, "refresh", "()V", false));
+            g.add(skip);
+            m.instructions.insert(g);
+            m.maxStack = Math.max(m.maxStack, 1);
+            applied.add("cablereload.tick");
+        }
+        return write(cn);
+    }
+
+    // --------------------------------------------------------- AE power bridge
+
+    /**
+     * aebridge: Mekanism gates every BuildCraft IPowerReceptor OUTPUT path behind
+     * MekanismHooks.BuildCraftLoaded (= the BuildCraft mod is installed). Applied Energistics
+     * implements IPowerReceptor via the bundled BuildCraft power API with no BuildCraft mod, so
+     * with AE and no BuildCraft (Voltz) Mekanism never powers AE - a cube face against the ME
+     * Controller does nothing and the cable network skips AE. In the four output methods, the
+     * `getfield MekanismHooks.BuildCraftLoaded` (which follows `getstatic Mekanism.hooks`) is
+     * replaced by `pop; VoltzMekanism.bcPowerAvailable()` - same stack shape, but gated on the
+     * BC power API actually being on the classpath instead of on the mod being present.
+     */
+    static byte[] patchAeBridge(byte[] in, String cls) {
+        String[] methods;
+        if (cls.equals(TE_CUBE))          methods = new String[] { "onUpdate" };
+        else if (cls.equals(CABLE_UTILS)) methods = new String[] { "getConnectedEnergyAcceptors" };
+        else                              methods = new String[] { "getEnergyAcceptors", "emit" };
+        Set<String> want = new HashSet<String>(Arrays.asList(methods));
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!want.contains(m.name)) continue;
+            int hits = 0;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.GETFIELD) continue;
+                FieldInsnNode f = (FieldInsnNode) i;
+                if (!f.owner.equals(HOOKS) || !f.name.equals("BuildCraftLoaded")) continue;
+                InsnList repl = new InsnList();
+                repl.add(new InsnNode(Opcodes.POP));                                   // drop the hooks objectref
+                repl.add(new MethodInsnNode(Opcodes.INVOKESTATIC, FIX, "bcPowerAvailable", "()Z", false));
+                m.instructions.insert(i, repl);
+                m.instructions.remove(i);
+                hits++;
+            }
+            if (hits != 1)
+                throw new IllegalStateException("aebridge: " + cls + "." + m.name
+                        + " expected 1 BuildCraftLoaded gate, found " + hits);
+            applied.add("aebridge." + cls + "." + m.name);
+        }
+        return write(cn);
     }
 
     // ------------------------------------------------------------ Electric Chest

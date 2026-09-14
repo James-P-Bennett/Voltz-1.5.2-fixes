@@ -41,6 +41,68 @@ public class VoltzMekanism {
     private static Class robitClass;
     private static Class playerInventory;
 
+    // -------------------------------------------- Energy network reload heal
+
+    private static final Map energyTicks = Collections.synchronizedMap(new WeakHashMap());
+
+    /** ticks between forced acceptor re-scans of an energy network (~3s) */
+    private static final int REFRESH_INTERVAL = 60;
+
+    /**
+     * Called from EnergyNetwork.tick(). The network's acceptor set (possibleAcceptors) is built
+     * only by refresh(), cables never tick (canUpdate() is false), and after a chunk unload/
+     * reload nothing reliably rebuilds it for acceptors that load on a different schedule than
+     * the cable (e.g. an AE controller across a chunk boundary) - so a working cable link goes
+     * dead until a neighbouring block is changed. This makes the network re-scan its acceptors
+     * periodically so the link self-heals within a few seconds instead of staying broken.
+     */
+    public static boolean shouldRefreshNetwork(Object network) {
+        try {
+            int[] c = (int[]) energyTicks.get(network);
+            if (c == null) {
+                c = new int[] { 0 };
+                energyTicks.put(network, c);
+            }
+            if (++c[0] >= REFRESH_INTERVAL) {
+                c[0] = 0;
+                return true;
+            }
+        } catch (Throwable t) {
+            // never let the heal counter break the network tick
+        }
+        return false;
+    }
+
+    // ---------------------------------------------- BuildCraft power API bridge
+
+    private static Boolean bcPower;
+
+    /**
+     * Replaces the MekanismHooks.BuildCraftLoaded gate on Mekanism's power-OUTPUT paths (the
+     * energy cube's direct face output and the Universal Cable network). Stock Mekanism only
+     * pushes MJ into a BuildCraft IPowerReceptor when the BuildCraft *mod* is installed, but
+     * Applied Energistics implements IPowerReceptor using the bundled BuildCraft power *API*
+     * with no BuildCraft mod present - so in a pack with AE and no BuildCraft (Voltz), Mekanism
+     * silently refuses to power AE. This returns true whenever the BC power API classes are on
+     * the classpath, which is the real precondition for using them safely.
+     */
+    public static boolean bcPowerAvailable() {
+        if (bcPower == null) {
+            boolean ok;
+            try {
+                Class.forName("buildcraft.api.power.IPowerReceptor");
+                Class.forName("buildcraft.api.power.IPowerProvider");
+                ok = true;
+            } catch (Throwable t) {
+                ok = false;
+            }
+            bcPower = Boolean.valueOf(ok);
+            System.out.println(TAG + "BuildCraft power API "
+                    + (ok ? "present - Mekanism will power IPowerReceptor tiles (e.g. AE)" : "absent"));
+        }
+        return bcPower.booleanValue();
+    }
+
     // ------------------------------------------------------ Electric Chest item
 
     /** InventoryElectricChest -> the slot and stack it was opened from */
