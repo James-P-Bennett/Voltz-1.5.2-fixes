@@ -13,6 +13,9 @@ import java.util.zip.*;
  *                 baoZhaQian              dataList1.add(v)  -> VoltzICBM.addUnique(list, v)
  *                 doBaoZha                world.spawnEntityInWorld(EFeiBlock)
  *                                           -> VoltzICBM.spawnFlyingBlock(world, e, source)
+ *   remote      TZhaDan.handlePacketData   detonate packet refused unless
+ *                                         VoltzICBM.remoteAllowed(tile, player, ...)
+ *   explosivetype TZhaDan.handlePacketData set-type packet (ID 1) ignored on the server
  *
  * Red matter's doBaoZha returns true unconditionally, so the black hole never ends. It is
  * saved with the chunk and rescans a radius-35 sphere every tick forever.
@@ -20,6 +23,14 @@ import java.util.zip.*;
  * The sonic and hypersonic ray march adds a position every 0.3 blocks, so each block
  * lands in dataList1 several times over, and every block within about 7 of the centre
  * becomes a flying block entity.
+ *
+ * The explosive block's detonate packet only checks that the sender holds a Remote. The
+ * Remote's own rules - which explosives it fires, its 1,500 J charge, the 100-block aim
+ * or the linked explosive - are enforced on the client alone.
+ *
+ * The same handler's set-type packet writes any int a client sends into the block's
+ * explosive id: any explosive becomes any other, or an id past the end of ZhaPin.list,
+ * which crashes the server on the next redstone update.
  *
  * usage: PatchICBM <in.jar> <out.jar> <patch>[,<patch>...] <VoltzICBM.class>
  */
@@ -30,6 +41,9 @@ public class PatchICBM {
     static final String SONIC      = EX + "ExShengBuo";
     static final String HYPERSONIC = EX + "ExChaoShengBuo";
     static final String MAIN_CLASS = "icbm/zhapin/ZhuYaoZhaPin";
+    static final String TILE_CLASS = "icbm/zhapin/zhapin/TZhaDan";
+    static final String REMOTE     = "icbm/zhapin/dianqi/ItYaoKong";
+    static final String ELECTRIC   = "universalelectricity/core/item/ItemElectric";
     static final String CFG_CLASS  = "icbm/zhapin/VoltzICBM";
 
     static final String WORLD      = "net/minecraft/world/World";
@@ -43,21 +57,23 @@ public class PatchICBM {
     static final int L_SOURCE    = 3;
     static final int L_CALLCOUNT = 5;
 
-    static boolean doRed, doSonic;
-    static boolean hitRed, hitInit;
+    static boolean doRed, doSonic, doRemote, doType;
+    static boolean hitRed, hitInit, hitRemote, hitType;
     static final Set<String> sonicAdds = new HashSet<String>();
     static final Set<String> sonicSpawns = new HashSet<String>();
 
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
             System.err.println("usage: PatchICBM <in.jar> <out.jar> <patches> <VoltzICBM.class>");
-            System.err.println("patches: redmatter,sonic");
+            System.err.println("patches: redmatter,sonic,remote,explosivetype");
             System.exit(2);
         }
         for (String p : args[2].split(",")) {
             p = p.trim();
             if (p.equals("redmatter")) doRed = true;
             else if (p.equals("sonic")) doSonic = true;
+            else if (p.equals("remote")) doRemote = true;
+            else if (p.equals("explosivetype")) doType = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -71,6 +87,8 @@ public class PatchICBM {
             if (doRed && n.equals(RED_CLASS + ".class"))    d = patchRedMatter(d);
             if (doSonic && n.equals(SONIC + ".class"))      d = patchSonic(d, SONIC);
             if (doSonic && n.equals(HYPERSONIC + ".class")) d = patchSonic(d, HYPERSONIC);
+            if (doRemote && n.equals(TILE_CLASS + ".class")) d = patchRemote(d);
+            if (doType && n.equals(TILE_CLASS + ".class"))   d = patchExplosiveType(d);
             if (n.equals(MAIN_CLASS + ".class"))            d = patchInitHook(d);
             out.put(n, d);
         }
@@ -84,6 +102,8 @@ public class PatchICBM {
                 if (!sonicSpawns.contains(c)) throw new IllegalStateException("sonic spawn cap did not apply to " + c);
             }
         }
+        if (doRemote && !hitRemote) throw new IllegalStateException("remote patch did not apply");
+        if (doType && !hitType) throw new IllegalStateException("explosivetype patch did not apply");
         if (!hitInit) throw new IllegalStateException("config init hook did not apply");
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
@@ -167,6 +187,108 @@ public class PatchICBM {
                 m.maxStack = m.maxStack + 1;
                 sonicSpawns.add(owner);
             }
+        }
+        return write(cn);
+    }
+
+    /**
+     * TZhaDan.handlePacketData, detonate branch (ID 2). Right after it stores the held stack
+     * (`astore 7`) and before BZhaDan.yinZha, insert
+     *
+     *     if (!VoltzICBM.remoteAllowed(this, player,
+     *             ((ItYaoKong) ZhuYaoZhaPin.itYaoKong).nengZha(this),
+     *             ZhuYaoZhaPin.itYaoKong.getJoules(stack),
+     *             ((ItYaoKong) ZhuYaoZhaPin.itYaoKong).getSavedCoord(stack))) return;
+     *
+     * The Remote's own methods are called in bytecode, so the helper needs no reflection
+     * into ICBM item classes.
+     */
+    static byte[] patchRemote(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("handlePacketData")) continue;
+            int hits = 0;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.ASTORE || ((VarInsnNode) i).var != 7) continue;
+                AbstractInsnNode prev = i.getPrevious();
+                while (prev != null && prev.getOpcode() < 0) prev = prev.getPrevious();
+                if (!(prev instanceof MethodInsnNode) || !((MethodInsnNode) prev).name.equals("func_70448_g")) continue;
+                LabelNode carryOn = new LabelNode();
+                InsnList g = new InsnList();
+                g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                g.add(new VarInsnNode(Opcodes.ALOAD, 4));
+                g.add(new FieldInsnNode(Opcodes.GETSTATIC, MAIN_CLASS, "itYaoKong", "L" + ELECTRIC + ";"));
+                g.add(new TypeInsnNode(Opcodes.CHECKCAST, REMOTE));
+                g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, REMOTE, "nengZha", "(Lnet/minecraft/tileentity/TileEntity;)Z", false));
+                g.add(new FieldInsnNode(Opcodes.GETSTATIC, MAIN_CLASS, "itYaoKong", "L" + ELECTRIC + ";"));
+                g.add(new VarInsnNode(Opcodes.ALOAD, 7));
+                g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, ELECTRIC, "getJoules", "(Lnet/minecraft/item/ItemStack;)D", false));
+                g.add(new FieldInsnNode(Opcodes.GETSTATIC, MAIN_CLASS, "itYaoKong", "L" + ELECTRIC + ";"));
+                g.add(new TypeInsnNode(Opcodes.CHECKCAST, REMOTE));
+                g.add(new VarInsnNode(Opcodes.ALOAD, 7));
+                g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, REMOTE, "getSavedCoord",
+                        "(Lnet/minecraft/item/ItemStack;)Luniversalelectricity/core/vector/Vector3;", false));
+                g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "remoteAllowed",
+                        "(Ljava/lang/Object;Ljava/lang/Object;ZDLjava/lang/Object;)Z", false));
+                g.add(new JumpInsnNode(Opcodes.IFNE, carryOn));
+                g.add(new InsnNode(Opcodes.RETURN));
+                g.add(carryOn);
+                m.instructions.insert(i, g);
+                hits++;
+            }
+            if (hits != 1) throw new IllegalStateException("remote: expected 1 held-stack store, found " + hits);
+            m.maxStack = m.maxStack + 8;
+            hitRemote = true;
+        }
+        return write(cn);
+    }
+
+    /**
+     * TZhaDan.handlePacketData, packet ID 1, sets the explosive id: `haoMa = data.readInt()`.
+     * Only the server sends it, as the block's description packet, but a client's copy is
+     * accepted too. Right after the packet ID is read (`istore`), insert
+     *
+     *     if (id == 1 && !this.worldObj.isRemote) {
+     *         VoltzICBM.typePacketRefused(this, player);
+     *         return;
+     *     }
+     *
+     * The client still applies the server's description packet.
+     */
+    static byte[] patchExplosiveType(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("handlePacketData")) continue;
+            int hits = 0;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.INVOKEINTERFACE || !((MethodInsnNode) i).name.equals("readByte")) continue;
+                AbstractInsnNode store = i.getNext();
+                while (store != null && store.getOpcode() < 0) store = store.getNext();
+                if (store == null || store.getOpcode() != Opcodes.ISTORE) continue;
+                LabelNode carryOn = new LabelNode();
+                InsnList g = new InsnList();
+                g.add(new VarInsnNode(Opcodes.ILOAD, ((VarInsnNode) store).var));
+                g.add(new InsnNode(Opcodes.ICONST_1));
+                g.add(new JumpInsnNode(Opcodes.IF_ICMPNE, carryOn));
+                g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                g.add(new FieldInsnNode(Opcodes.GETFIELD, TILE_CLASS, "field_70331_k", "L" + WORLD + ";"));
+                g.add(new FieldInsnNode(Opcodes.GETFIELD, WORLD, "field_72995_K", "Z"));   // World.isRemote
+                g.add(new JumpInsnNode(Opcodes.IFNE, carryOn));
+                g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                g.add(new VarInsnNode(Opcodes.ALOAD, 4));
+                g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "typePacketRefused",
+                        "(Ljava/lang/Object;Ljava/lang/Object;)V", false));
+                g.add(new InsnNode(Opcodes.RETURN));
+                g.add(carryOn);
+                m.instructions.insert(store, g);
+                hits++;
+            }
+            if (hits != 1) throw new IllegalStateException("explosivetype: expected 1 packet ID read, found " + hits);
+            m.maxStack = Math.max(m.maxStack, 2);
+            hitType = true;
         }
         return write(cn);
     }

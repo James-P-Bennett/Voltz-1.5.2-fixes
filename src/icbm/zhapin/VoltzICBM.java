@@ -154,6 +154,101 @@ public class VoltzICBM {
         }
     }
 
+    // ------------------------------------------------------- remote detonator
+
+    /** Remote aim range on the client (ItYaoKong.BAN_JING), plus a little for eye height. */
+    private static final double REMOTE_RANGE_SQ = 102.0d * 102.0d;
+    private static final long LOG_INTERVAL_MS = 10000L;
+    private static final Map lastLog = new java.util.HashMap();
+
+    /**
+     * Inserted into TZhaDan.handlePacketData just before a remote detonation. Stock checks
+     * only that the sender holds a Remote; these are the Remote's own rules, which it
+     * otherwise enforces on the client alone:
+     *
+     *  - the explosive is one a Remote can fire (condensed, breaching, S-mine: nengZha)
+     *  - the Remote has more than 1,500 J
+     *  - the explosive is the one linked to this Remote, or within its 100-block aim
+     *
+     * @return true to let the stock detonation run
+     */
+    public static boolean remoteAllowed(Object tile, Object player, boolean detonatable, double joules, Object linked) {
+        try {
+            int x = ((Integer) field(tile, "field_70329_l")).intValue();       // TileEntity.xCoord
+            int y = ((Integer) field(tile, "field_70330_m")).intValue();
+            int z = ((Integer) field(tile, "field_70327_n")).intValue();
+            String where = x + "," + y + "," + z;
+            if (!detonatable) {
+                refused(player, "remote detonation of " + where + " (not a remote-detonatable explosive)");
+                return false;
+            }
+            if (joules <= 1500.0d) {
+                refused(player, "remote detonation of " + where + " (remote has no charge)");
+                return false;
+            }
+            if (linked != null
+                    && (int) Math.floor(linked.getClass().getField("x").getDouble(linked)) == x
+                    && (int) Math.floor(linked.getClass().getField("y").getDouble(linked)) == y
+                    && (int) Math.floor(linked.getClass().getField("z").getDouble(linked)) == z) {
+                return true;
+            }
+            double d = ((Double) findMethod(player.getClass(), "func_70092_e", 3).invoke(player,      // Entity.getDistanceSq
+                    new Object[] { Double.valueOf(x + 0.5d), Double.valueOf(y + 0.5d), Double.valueOf(z + 0.5d) })).doubleValue();
+            if (d <= REMOTE_RANGE_SQ) {
+                return true;
+            }
+            refused(player, "remote detonation of " + where + " (not linked, and out of range)");
+            return false;
+        } catch (Throwable t) {
+            System.out.println(TAG + "remote detonation check failed, refused: " + t);
+            return false;
+        }
+    }
+
+    // --------------------------------------------------------- explosive type
+
+    /**
+     * Inserted into TZhaDan.handlePacketData when the server receives packet ID 1, which
+     * sets the explosive id. Only the server sends that packet, so the change is dropped.
+     */
+    public static void typePacketRefused(Object tile, Object player) {
+        String where;
+        try {
+            where = field(tile, "field_70329_l") + "," + field(tile, "field_70330_m") + "," + field(tile, "field_70327_n");
+        } catch (Throwable t) {
+            where = "?";
+        }
+        refused(player, "explosive type change at " + where + " (only the server sends that packet)");
+    }
+
+    private static Object field(Object o, String name) throws Exception {
+        for (Class k = o.getClass(); k != null; k = k.getSuperclass()) {
+            try {
+                java.lang.reflect.Field f = k.getDeclaredField(name);
+                f.setAccessible(true);
+                return f.get(o);
+            } catch (NoSuchFieldException ignored) {
+            }
+        }
+        throw new NoSuchFieldException(o.getClass().getName() + "#" + name);
+    }
+
+    private static void refused(Object player, String what) {
+        String name;
+        try {
+            name = String.valueOf(field(player, "field_71092_bJ"));           // EntityPlayer.username
+        } catch (Throwable t) {
+            name = "?";
+        }
+        long now = System.currentTimeMillis();
+        Long last = (Long) lastLog.get(name);
+        if (last != null && now - last.longValue() < LOG_INTERVAL_MS) {
+            return;
+        }
+        lastLog.put(name, Long.valueOf(now));
+        System.out.println(TAG + "refused " + what + " from " + name);
+    }
+
     private static Method findMethod(Class c, String name, int argc) throws NoSuchMethodException {
         for (Class k = c; k != null; k = k.getSuperclass()) {
             Method[] ms = k.getDeclaredMethods();
