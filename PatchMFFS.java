@@ -23,6 +23,9 @@ import java.util.zip.*;
  * It also fixes the Interdiction Matrix merge dupe (fixMerge below): confiscated and
  * Anti-Personnel stacks were multiplied by MFR conveyors next to the matrix.
  *
+ * And the Stabilize module dupe (fixStabilize below): it took items from slots of sided
+ * inventories that no hopper or pipe could reach, such as the ghost copies in MFR filter slots.
+ *
  * usage: PatchMFFS <in.jar> <out.jar> <VoltzZones.class>
  */
 public class PatchMFFS {
@@ -32,6 +35,8 @@ public class PatchMFFS {
     static final String PKG        = "mffs/item/module/interdiction/";
     static final String MATRIX_TE  = "mffs/tileentity/TileEntityInterdictionMatrix";
     static final String INVENTORY_TE = "mffs/base/TileEntityInventory";
+    static final String STABILIZE    = "mffs/item/module/projector/ItemModuleStablize";
+    static final String SIDED        = "net/minecraft/inventory/ISidedInventory";
 
     static final String ATTACK       = "func_70097_a";   // Entity.attackEntityFrom
     static final String ATTACK_DESC  = "(Lnet/minecraft/util/DamageSource;I)Z";
@@ -58,7 +63,7 @@ public class PatchMFFS {
     };
 
     static final Set<String> patched = new HashSet<String>();
-    static boolean hitInit, hitKill, hitTaken, hitTick, hitMerge;
+    static boolean hitInit, hitKill, hitTaken, hitTick, hitMerge, hitStabilize;
 
     public static void main(String[] args) throws Exception {
         if (args.length < 3) {
@@ -81,6 +86,7 @@ public class PatchMFFS {
             if (n.equals(MATRIX_TE + ".class"))                  d = logMatrix(d);
             if (n.equals(MOD_CLASS + ".class")) d = initHook(d);
             if (n.equals(INVENTORY_TE + ".class"))               d = fixMerge(d);
+            if (n.equals(STABILIZE + ".class"))                  d = fixStabilize(d);
             out.put(n, d);
         }
         zf.close();
@@ -94,6 +100,7 @@ public class PatchMFFS {
         if (!hitTaken) throw new IllegalStateException("confiscate log hook did not apply");
         if (!hitTick)  throw new IllegalStateException("matrix load hook did not apply");
         if (!hitMerge) throw new IllegalStateException("merge dupe fix did not apply");
+        if (!hitStabilize) throw new IllegalStateException("stabilize dupe fix did not apply");
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
         for (Map.Entry<String, byte[]> en : out.entrySet()) {
@@ -258,9 +265,102 @@ public class PatchMFFS {
         return cw.toByteArray();
     }
 
+    /**
+     * ItemModuleStablize.onProject(IProjector, Vector3) - the Stabilize module - builds the
+     * field out of block items from every inventory touching the projector:
+     *
+     *     for (int slot = 0; slot < inventory.getSizeInventory(); slot++) {
+     *         ItemStack stack = inventory.getStackInSlot(slot);
+     *         if (stack == null) continue;
+     *         ... place stack's block ...; inventory.decrStackSize(slot, 1);
+     *
+     * Every slot, ignoring ISidedInventory, so it takes items no hopper or pipe can reach -
+     * including the ghost copies in MFR filter slots, which the player refills with a click
+     * for one free block each time. Straight after the null check this adds:
+     *
+     *     if (inventory instanceof ISidedInventory
+     *             && (!BalancedMFFS.hasSlot(sided.getAccessibleSlotsFromSide(face), slot)
+     *                 || !sided.canExtractItem(slot, stack, face))) continue;
+     *
+     * face is the inventory's side touching the projector, the opposite of the loop's
+     * direction (ForgeDirection opposites differ only in the low bit). Plain inventories
+     * such as chests are unaffected.
+     */
+    static byte[] fixStabilize(byte[] in) {
+        ClassNode cn = new ClassNode();
+        new ClassReader(in).accept(cn, ClassReader.SKIP_FRAMES);
+        for (Object o : cn.methods) {
+            MethodNode m = (MethodNode) o;
+            if (!m.name.equals("onProject")
+                    || !m.desc.equals("(Lmffs/api/IProjector;Luniversalelectricity/core/vector/Vector3;)I"))
+                continue;
+            int dirVar = -1, hits = 0;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (!(i instanceof MethodInsnNode)) continue;
+                MethodInsnNode mi = (MethodInsnNode) i;
+                if (mi.name.equals("getOrientation") && prevReal(i).getOpcode() == Opcodes.ILOAD) {
+                    dirVar = ((VarInsnNode) prevReal(i)).var;
+                    continue;
+                }
+                if (i.getOpcode() != Opcodes.INVOKEINTERFACE || !mi.name.equals("func_70301_a")) continue;
+                AbstractInsnNode slotLoad = prevReal(i), invLoad = prevReal(slotLoad);
+                AbstractInsnNode store = real(i.getNext()), load = real(store.getNext()), isNull = real(load.getNext());
+                if (dirVar < 0 || invLoad.getOpcode() != Opcodes.ALOAD || slotLoad.getOpcode() != Opcodes.ILOAD
+                        || store.getOpcode() != Opcodes.ASTORE || load.getOpcode() != Opcodes.ALOAD
+                        || ((VarInsnNode) load).var != ((VarInsnNode) store).var
+                        || isNull.getOpcode() != Opcodes.IFNULL) continue;
+                int inv = ((VarInsnNode) invLoad).var, slot = ((VarInsnNode) slotLoad).var;
+                int stack = ((VarInsnNode) store).var;
+                LabelNode skip = ((JumpInsnNode) isNull).label;
+                LabelNode carryOn = new LabelNode();
+                InsnList g = new InsnList();
+                g.add(new VarInsnNode(Opcodes.ALOAD, inv));
+                g.add(new TypeInsnNode(Opcodes.INSTANCEOF, SIDED));
+                g.add(new JumpInsnNode(Opcodes.IFEQ, carryOn));
+                g.add(new VarInsnNode(Opcodes.ALOAD, inv));
+                g.add(new TypeInsnNode(Opcodes.CHECKCAST, SIDED));
+                addFace(g, dirVar);
+                g.add(new MethodInsnNode(Opcodes.INVOKEINTERFACE, SIDED, "func_94128_d", "(I)[I", true));
+                g.add(new VarInsnNode(Opcodes.ILOAD, slot));
+                g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "hasSlot", "([II)Z", false));
+                g.add(new JumpInsnNode(Opcodes.IFEQ, skip));
+                g.add(new VarInsnNode(Opcodes.ALOAD, inv));
+                g.add(new TypeInsnNode(Opcodes.CHECKCAST, SIDED));
+                g.add(new VarInsnNode(Opcodes.ILOAD, slot));
+                g.add(new VarInsnNode(Opcodes.ALOAD, stack));
+                addFace(g, dirVar);
+                g.add(new MethodInsnNode(Opcodes.INVOKEINTERFACE, SIDED, "func_102008_b",
+                        "(ILnet/minecraft/item/ItemStack;I)Z", true));
+                g.add(new JumpInsnNode(Opcodes.IFEQ, skip));
+                g.add(carryOn);
+                m.instructions.insert(isNull, g);
+                hits++;
+            }
+            if (hits != 1) throw new IllegalStateException("stabilize dupe fix: expected 1 slot read, found " + hits);
+            m.maxStack = Math.max(m.maxStack, 5);
+            hitStabilize = true;
+        }
+        ClassWriter cw = new ClassWriter(0);
+        cn.accept(cw);
+        return cw.toByteArray();
+    }
+
+    /** the inventory's face toward the projector: opposite of ForgeDirection direction */
+    static void addFace(InsnList g, int dirVar) {
+        g.add(new VarInsnNode(Opcodes.ILOAD, dirVar));
+        g.add(new InsnNode(Opcodes.ICONST_1));
+        g.add(new InsnNode(Opcodes.IXOR));
+    }
+
     /** skip labels, line numbers and frames, which sit between real instructions */
     static AbstractInsnNode real(AbstractInsnNode n) {
         while (n != null && n.getOpcode() < 0) n = n.getNext();
+        return n;
+    }
+
+    static AbstractInsnNode prevReal(AbstractInsnNode n) {
+        n = n.getPrevious();
+        while (n != null && n.getOpcode() < 0) n = n.getPrevious();
         return n;
     }
 
