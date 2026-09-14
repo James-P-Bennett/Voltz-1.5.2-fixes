@@ -102,7 +102,7 @@ patch_one "Mekanism"       "$MEK_SRC"  "Mekanism-v5.5.6.bugfix1-patched.jar" \
 
 patch_one "ICBM Explosion" "$ICBM_SRC" "ICBM_Explosion_v1.2.1.172-patched.jar" \
           PatchICBM.java build/cls/icbm/zhapin/VoltzICBM.class \
-          "redmatter,sonic"
+          "redmatter,sonic,remote,explosivetype"
 
 patch_one "Modular Powersuits" "$MPS_SRC" "ModularPowersuits-0.7.0-534-patched.jar" \
           PatchMPS.java  build/cls/net/machinemuse/powersuits/VoltzMPS.class \

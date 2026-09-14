@@ -13,7 +13,7 @@ Each patch is selectable individually.
 | [MPS Addons 0.2.3](#mps-addons-023) | `magnet` |
 | [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` · `mergedupe` · `stabilizedupe` |
 | [Mekanism 5.5.6](#mekanism-556) | `chestcrash` · `chestdupe` · `chestremote` · `machinedupe` · `robitdupe` · `tntdupe` · `tntsource` · `timeitems` |
-| [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` |
+| [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` · `remote` · `explosivetype` |
 | [Modular Powersuits 0.7.0](#modular-powersuits-070) | `blink` |
 | [MineFactoryReloaded 2.6.4](#minefactoryreloaded-264) | `ghostslot` |
 
@@ -685,12 +685,14 @@ MCPC+ the command ran through Bukkit (`* VTest voted for noon via VTest`).
 
 ## ICBM Explosion 1.2.1
 
-Two fixes for explosives that never stop, or flood the server with entities. The patcher
-rewrites four classes in `ICBM_Explosion_v1.2.1.172.jar` and adds `VoltzICBM`.
+Four fixes: explosives that never stop or flood the server with entities, and an explosive
+block packet handler that trusts the client. The patcher rewrites five classes in
+`ICBM_Explosion_v1.2.1.172.jar` and adds `VoltzICBM`.
 
 Verified with the same harness on the dedicated Forge server. On MCPC+ the explosions never
 ticked in the harness at all — Spigot's entity activation skips entities with no player
-nearby — so they were not exercised there. Neither patch has any platform-specific code.
+nearby — so they were not exercised there. `remote` and `explosivetype` were tested on Forge
+only. None of the four has any platform-specific code.
 
 <details>
 <summary><b>1. <code>redmatter</code> — a Red Matter black hole never ends</b></summary>
@@ -732,7 +734,70 @@ these are ranges:
 
 </details>
 
-`config/VoltzFixes-ICBM.cfg`. `0` restores the stock behaviour for either:
+<details>
+<summary><b>3. <code>remote</code> — detonate any explosive from anywhere</b></summary>
+
+**The bug.** The Remote detonator sends a packet naming an explosive block. The server only
+checks that the sender is holding a Remote:
+
+```java
+if (player.getCurrentItem().getItem() instanceof ItYaoKong) {
+    BZhaDan.yinZha(world, x, y, z, explosiveId, 0);   // detonate
+    remote.drain(1500);
+}
+```
+
+The Remote's real rules live in the client alone: it fires only Condensed, Breaching and S-Mine
+explosives, needs more than 1,500 J, and reaches 100 blocks unless linked to the explosive. A
+modified client can detonate any explosive block in the dimension, antimatter and red matter
+included, with an empty Remote and from any distance.
+
+**The patch.** The server checks the same three rules before detonating, and logs refusals at
+most once per player every 10 seconds:
+
+```
+[VoltzFixes] refused remote detonation of 1541,200,-76 (not a remote-detonatable explosive) from VTest
+```
+
+**Verified** on the Forge test server, sending real `ICBM|E` packets from a server-side player:
+
+| Remote packet | Stock | Patched |
+|---|---|---|
+| Condensed, charged, 10 blocks away | detonates | detonates |
+| Antimatter | detonates | refused |
+| Remote at 1,000 J | detonates | refused |
+| Remote at exactly 1,500 J | detonates | refused |
+| 500 blocks away, not linked | detonates | refused |
+| 500 blocks away, linked to that explosive | detonates | detonates |
+| Holding stone | nothing | nothing |
+
+</details>
+
+<details>
+<summary><b>4. <code>explosivetype</code> — any client can change an explosive, or crash the server</b></summary>
+
+**The bug.** The same handler has a second packet type that sets the block's explosive id:
+
+```java
+if (packetId == 1) this.explosiveId = data.readInt();
+```
+
+It exists so the server can tell clients what a block is, but the server accepts it from
+clients too. Any explosive block can be turned into antimatter or red matter. An id past the
+end of the explosive list is worse: the next redstone update indexes the list with it and
+throws `Exception while updating neighbours`, which crashes the server, and the block renderer
+does the same lookup on every client that can see it.
+
+**The patch.** The server ignores that packet type and logs it. Clients still apply it when
+the server sends it.
+
+**Verified** on the same server. Stock took id 99 from the packet, and a redstone block placed
+next to it threw `Exception while updating neighbours`. Patched kept the original id. A mock
+test confirmed a client still applies the packet from the server.
+
+</details>
+
+`config/VoltzFixes-ICBM.cfg` covers `redmatter` and `sonic`. `0` restores the stock behaviour for either:
 
 ```
 general {
@@ -934,6 +999,7 @@ ICBM_Explosion_v1.2.1.172-patched.jar
   changed icbm/zhapin/zhapin/ex/ExHongSu.class        red matter lifetime
           icbm/zhapin/zhapin/ex/ExShengBuo.class      queue dedupe, flying block cap
           icbm/zhapin/zhapin/ex/ExChaoShengBuo.class  queue dedupe, flying block cap
+          icbm/zhapin/zhapin/TZhaDan.class            remote and set-type packet checks
           icbm/zhapin/ZhuYaoZhaPin.class              config init hook
 
 ModularPowersuits-0.7.0-534-patched.jar
