@@ -125,3 +125,17 @@ patch_one "ICBM Contraption" "$ICBMC_SRC" "ICBM_Contraption_v1.2.1.172-patched.j
 patch_one "MineFactoryReloaded" "$MFR_SRC" "MineFactoryReloaded-2.6.4-975-patched.jar" \
           PatchMFR.java  build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class \
           "ghostslot"
+
+# VoltzLoginGuard: a coremod (not a mod patch) - the FML login-sequence crash guard. Compiled
+# against ASM (using only the 4-arg MethodInsnNode, which FML 1.5.2's ASM 4.1 also has) and the
+# Forge zip, then jarred with an FMLCorePlugin manifest. Drop the jar in a server's coremods/.
+echo "building VoltzLoginGuard coremod"
+rm -rf build/lg && mkdir -p build/lg/META-INF build/lg/voltz/loginguard
+"$JAVAC8" -nowarn -source 1.6 -target 1.6 -bootclasspath "$(dirname "$JAVAC8")/../jre/lib/rt.jar" \
+    -cp "$ASM:$FORGE" -d build/lg \
+    src/voltz/loginguard/VoltzLoginGuard.java src/voltz/loginguard/LoginGuardTransformer.java 2>&1 \
+    | grep -vE 'bootstrap class path|source value 1\.6|target value 1\.6|options|deprecat' || true
+[ -f build/lg/voltz/loginguard/LoginGuardTransformer.class ] || { echo "VoltzLoginGuard did not compile" >&2; exit 1; }
+printf 'Manifest-Version: 1.0\r\nFMLCorePlugin: voltz.loginguard.VoltzLoginGuard\r\n' > build/lg/META-INF/MANIFEST.MF
+( cd build/lg && jar cfm "$OLDPWD/VoltzLoginGuard.jar" META-INF/MANIFEST.MF voltz )
+echo "OK  wrote VoltzLoginGuard.jar  [login guard coremod]"
