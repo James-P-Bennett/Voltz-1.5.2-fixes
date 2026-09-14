@@ -26,6 +26,11 @@ import java.util.zip.*;
  *   designator  ZhaPinPacketGuanLi         laser designator packet checked by VoltzICBM.designatorAllowed
  *   defuser     ItJieJa.onLeftClickEntity  dead entities ignored
  *   missilestack TFaSheDi / TXiaoFaSheQi   onActivated loads one missile from the held stack
+ *   listeners   TDianCiQi / TFaSheShiMuo / TLeiDaTai / TXiaoFaSheQi
+ *                                         GUI listener sets: joined within reach, pruned every tick loop
+ *   radarradius TLeiDaTai                  every alarm/safety radius write clamped to 0..500
+ *   radargun    ZhaPinPacketGuanLi         radar gun packet needs the gun's 1,000 J
+ *   chunkload   ZhaPinPacketGuanLi         onPacketData drops a tile packet aimed at an unloaded chunk
  *
  * Red matter's doBaoZha returns true unconditionally, so the black hole never ends. It is
  * saved with the chunk and rescans a radius-35 sphere every tick forever.
@@ -62,11 +67,15 @@ public class PatchICBM {
     static final String CRUISE        = "icbm/zhapin/jiqi/TXiaoFaSheQi";
     static final String RADAR         = "icbm/zhapin/jiqi/TLeiDaTai";
     static final String PACKETS       = "icbm/zhapin/ZhaPinPacketGuanLi";
+    static final String ROUTER        = "universalelectricity/prefab/network/PacketManager";
+    static final String ON_PACKET_DESC =
+            "(Lnet/minecraft/network/INetworkManager;Lnet/minecraft/network/packet/Packet250CustomPayload;Lcpw/mods/fml/common/network/Player;)V";
     static final String DESIGNATOR    = "icbm/zhapin/dianqi/ItLeiSheZhiBiao";
     static final String DEFUSER       = "icbm/zhapin/dianqi/ItJieJa";
     static final String STACK         = "net/minecraft/item/ItemStack";
     static final String INV_PLAYER    = "net/minecraft/entity/player/InventoryPlayer";
     static final String[] MULTIBLOCK_OWNERS = { LAUNCH_BASE, LAUNCH_FRAME, EMP_CLASS, RADAR };
+    static final String[] LISTENER_OWNERS = { EMP_CLASS, LAUNCH_SCREEN, RADAR, CRUISE };
 
     static final String WORLD      = "net/minecraft/world/World";
     static final String SPAWN      = "func_72838_d";   // World.spawnEntityInWorld
@@ -82,6 +91,9 @@ public class PatchICBM {
     static boolean doRed, doSonic, doRemote, doType, doEmp, doLauncher;
     static boolean doMulti, doCruise, doDesignator, doDefuser, doMissile;
     static boolean hitCruise, hitDesignator, hitDefuser;
+    static boolean doListeners, doRadarRadius, doRadarGun, hitRadarRadius, hitRadarGun;
+    static boolean doChunkLoad, hitChunkLoad;
+    static final Set<String> listenerHits = new HashSet<String>();
     static final Set<String> multiHits = new HashSet<String>();
     static final Set<String> missileHits = new HashSet<String>();
     static boolean hitRed, hitInit, hitRemote, hitType, hitEmp;
@@ -92,7 +104,7 @@ public class PatchICBM {
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
             System.err.println("usage: PatchICBM <in.jar> <out.jar> <patches> <VoltzICBM.class>");
-            System.err.println("patches: redmatter,sonic,remote,explosivetype,empradius,launchertier,multiblock,cruiselauncher,designator,defuser,missilestack");
+            System.err.println("patches: redmatter,sonic,remote,explosivetype,empradius,launchertier,multiblock,cruiselauncher,designator,defuser,missilestack,listeners,radarradius,radargun,chunkload");
             System.exit(2);
         }
         for (String p : args[2].split(",")) {
@@ -108,6 +120,10 @@ public class PatchICBM {
             else if (p.equals("designator")) doDesignator = true;
             else if (p.equals("defuser")) doDefuser = true;
             else if (p.equals("missilestack")) doMissile = true;
+            else if (p.equals("listeners")) doListeners = true;
+            else if (p.equals("radarradius")) doRadarRadius = true;
+            else if (p.equals("radargun")) doRadarGun = true;
+            else if (p.equals("chunkload")) doChunkLoad = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -134,6 +150,11 @@ public class PatchICBM {
             if (doDefuser && n.equals(DEFUSER + ".class"))     d = patchDefuser(d);
             if (doMissile && (n.equals(LAUNCH_BASE + ".class") || n.equals(CRUISE + ".class")))
                 d = patchMissileStack(d, n.substring(0, n.length() - ".class".length()));
+            for (String owner : LISTENER_OWNERS)
+                if (doListeners && n.equals(owner + ".class")) d = patchListeners(d, owner);
+            if (doRadarRadius && n.equals(RADAR + ".class"))  d = patchRadarRadius(d);
+            if (doRadarGun && n.equals(PACKETS + ".class"))   d = patchRadarGun(d);
+            if (doChunkLoad && n.equals(PACKETS + ".class"))  d = patchChunkLoad(d);
             if (n.equals(MAIN_CLASS + ".class"))            d = patchInitHook(d);
             out.put(n, d);
         }
@@ -159,6 +180,11 @@ public class PatchICBM {
         if (doDefuser && !hitDefuser) throw new IllegalStateException("defuser patch did not apply");
         if (doMissile && missileHits.size() != 2)
             throw new IllegalStateException("missilestack patch applied to " + missileHits + ", expected 2 classes");
+        if (doListeners && listenerHits.size() != 7)
+            throw new IllegalStateException("listeners patch applied to " + listenerHits + ", expected 4 tick loops and 3 joins");
+        if (doRadarRadius && !hitRadarRadius) throw new IllegalStateException("radarradius patch did not apply");
+        if (doRadarGun && !hitRadarGun) throw new IllegalStateException("radargun patch did not apply");
+        if (doChunkLoad && !hitChunkLoad) throw new IllegalStateException("chunkload patch did not apply");
         if (!hitInit) throw new IllegalStateException("config init hook did not apply");
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
@@ -651,6 +677,151 @@ public class PatchICBM {
         }
         return write(cn);
     }
+
+    /**
+     * The EMP tower, launcher screen, radar and cruise launcher keep a Set of players with the
+     * GUI open (yongZhe) and send each one a description packet from their tick. Players join
+     * through packet -1 from any distance, and are only removed when their client says the GUI
+     * closed, so a disconnect or death leaves them in the set until the chunk unloads. Two changes:
+     *
+     *     yongZhe.add(player)       -> VoltzICBM.addListener(yongZhe, player, this)   joins within reach
+     *     yongZhe.iterator() in the tick gets VoltzICBM.pruneListeners(yongZhe, this) first
+     */
+    static byte[] patchListeners(byte[] in, String owner) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.GETFIELD) continue;
+                FieldInsnNode f = (FieldInsnNode) i;
+                if (!f.owner.equals(owner) || !f.name.equals("yongZhe")) continue;
+                AbstractInsnNode nx = i.getNext();
+                while (nx != null && nx.getOpcode() < 0) nx = nx.getNext();
+                if (m.name.equals("func_70316_g") && nx instanceof MethodInsnNode && ((MethodInsnNode) nx).name.equals("iterator")) {
+                    InsnList prune = new InsnList();
+                    prune.add(new InsnNode(Opcodes.DUP));
+                    prune.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                    prune.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "pruneListeners", "(Ljava/util/Set;Ljava/lang/Object;)V", false));
+                    m.instructions.insert(i, prune);
+                    m.maxStack = m.maxStack + 2;
+                    listenerHits.add(owner + ".tick");
+                } else if (m.name.equals("handlePacketData") && nx.getOpcode() == Opcodes.ALOAD && ((VarInsnNode) nx).var == 4) {
+                    AbstractInsnNode call = nx.getNext();
+                    while (call != null && call.getOpcode() < 0) call = call.getNext();
+                    if (!(call instanceof MethodInsnNode) || !((MethodInsnNode) call).name.equals("add")) continue;
+                    m.instructions.insertBefore(call, new VarInsnNode(Opcodes.ALOAD, 0));
+                    m.instructions.set(call, new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "addListener",
+                            "(Ljava/util/Set;Ljava/lang/Object;Ljava/lang/Object;)Z", false));
+                    m.maxStack = m.maxStack + 1;
+                    listenerHits.add(owner + ".join");
+                }
+            }
+        }
+        return write(cn);
+    }
+
+    /**
+     * TLeiDaTai (radar). Packets 2 and 3 set the safety and alarm radius from the GUI, which
+     * clamps them to 0..MAX_BIAN_JING (500); the server takes any int. Every write to either
+     * field - constructor, packets, NBT load - goes through VoltzICBM.radarRadius.
+     */
+    static byte[] patchRadarRadius(byte[] in) {
+        ClassNode cn = read(in);
+        int hits = 0;
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.PUTFIELD) continue;
+                FieldInsnNode f = (FieldInsnNode) i;
+                if (!f.owner.equals(RADAR) || !(f.name.equals("alarmBanJing") || f.name.equals("safetyBanJing"))) continue;
+                m.instructions.insertBefore(i, new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "radarRadius", "(I)I", false));
+                hits++;
+            }
+        }
+        if (hits != 8) throw new IllegalStateException("radarradius: expected 8 radius writes, found " + hits);
+        hitRadarRadius = true;
+        return write(cn);
+    }
+
+    /**
+     * ZhaPinPacketGuanLi.handlePacketData, RADAR_GUN branch: stores the client's coordinates on
+     * the held radar gun and drains 1,000 J, without the client's check that the gun has more
+     * than 1,000 J. Right after the held stack is stored (the store followed by a read of its NBT
+     * tag), insert
+     *
+     *     if (itLeiDaQiang.getJoules(stack) <= 1000) { VoltzICBM.radarGunRefused(player); return; }
+     */
+    static byte[] patchRadarGun(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("handlePacketData")) continue;
+            int hits = 0;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.ASTORE) continue;
+                AbstractInsnNode a = i.getNext();
+                while (a != null && a.getOpcode() < 0) a = a.getNext();
+                AbstractInsnNode b = a == null ? null : a.getNext();
+                while (b != null && b.getOpcode() < 0) b = b.getNext();
+                if (a == null || a.getOpcode() != Opcodes.ALOAD || ((VarInsnNode) a).var != ((VarInsnNode) i).var
+                        || !(b instanceof FieldInsnNode) || !((FieldInsnNode) b).name.equals("field_77990_d")) continue;   // stackTagCompound
+                int stack = ((VarInsnNode) i).var;
+                LabelNode carryOn = new LabelNode();
+                InsnList g = new InsnList();
+                g.add(new FieldInsnNode(Opcodes.GETSTATIC, MAIN_CLASS, "itLeiDaQiang", "L" + ELECTRIC + ";"));
+                g.add(new VarInsnNode(Opcodes.ALOAD, stack));
+                g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, ELECTRIC, "getJoules", "(L" + STACK + ";)D", false));
+                g.add(new LdcInsnNode(Double.valueOf(1000.0d)));
+                g.add(new InsnNode(Opcodes.DCMPL));
+                g.add(new JumpInsnNode(Opcodes.IFGT, carryOn));
+                g.add(new VarInsnNode(Opcodes.ALOAD, 4));
+                g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "radarGunRefused", "(Ljava/lang/Object;)V", false));
+                g.add(new InsnNode(Opcodes.RETURN));
+                g.add(carryOn);
+                m.instructions.insert(i, g);
+                hits++;
+            }
+            if (hits != 1) throw new IllegalStateException("radargun: expected 1 radar gun stack store, found " + hits);
+            m.maxStack = m.maxStack + 4;
+            hitRadarGun = true;
+        }
+        return write(cn);
+    }
+
+    /**
+     * Adds an onPacketData(INetworkManager, Packet250CustomPayload, Player) override to the ICBM
+     * packet handler, gating the inherited router on {HELPER}.chunkGuard so a TILEENTITY packet
+     * aimed at an unloaded chunk is dropped instead of loading it. Only added when the class does
+     * not already define onPacketData.
+     */
+    static byte[] patchChunkLoad(byte[] in) {{
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {{
+            MethodNode em = (MethodNode) mo;
+            if (em.name.equals("onPacketData") && em.desc.equals(ON_PACKET_DESC))
+                throw new IllegalStateException("chunkload: ZhaPinPacketGuanLi already defines onPacketData");
+        }}
+        MethodNode m = new MethodNode(Opcodes.ACC_PUBLIC, "onPacketData", ON_PACKET_DESC, null, null);
+        LabelNode drop = new LabelNode();
+        InsnList g = m.instructions;
+        g.add(new VarInsnNode(Opcodes.ALOAD, 2));                                               // packet
+        g.add(new VarInsnNode(Opcodes.ALOAD, 3));                                               // player
+        g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "chunkGuard", "(Ljava/lang/Object;Ljava/lang/Object;)Z", false));
+        g.add(new JumpInsnNode(Opcodes.IFEQ, drop));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 2));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 3));
+        g.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, ROUTER, "onPacketData", ON_PACKET_DESC, false));
+        g.add(new LabelNode());
+        g.add(drop);
+        g.add(new InsnNode(Opcodes.RETURN));
+        m.maxStack = 4;
+        m.maxLocals = 4;
+        cn.methods.add(m);
+        hitChunkLoad = true;
+        return write(cn);
+    }}
 
     /** Load config/VoltzFixes-ICBM.cfg at startup by calling VoltzICBM.init() from preInit. */
     static byte[] patchInitHook(byte[] in) {

@@ -10,6 +10,8 @@ import java.util.zip.*;
  *   camouflage   TYinXing.handlePacketData   ignored on the server
  *                TYinXing.readFromNBT        jiaHaoMa -> VoltzContraption.blockId(jiaHaoMa)
  *   detector     TYinGanQi.handlePacketData  packet refused unless VoltzContraption.detectorPacketAllowed
+ *   listeners    TYinGanQi yongZhe: joined within reach, pruned before each tick send
+ *   chunkload    WanYiPacketGuanLi onPacketData drops a tile packet aimed at an unloaded chunk
  *
  * The camouflage block's packet is the server's description packet - disguise block id and
  * metadata, see-through sides, solid - but the server applies it from any client. An id past
@@ -24,21 +26,28 @@ public class PatchICBMContraption {
     static final String CAMO   = "icbm/wanyi/b/TYinXing";
     static final String HELPER = "icbm/wanyi/VoltzContraption";
     static final String DETECTOR = "icbm/wanyi/b/TYinGanQi";
+    static final String PACKETS  = "icbm/wanyi/WanYiPacketGuanLi";
+    static final String ROUTER   = "universalelectricity/prefab/network/PacketManager";
+    static final String ON_PACKET_DESC =
+            "(Lnet/minecraft/network/INetworkManager;Lnet/minecraft/network/packet/Packet250CustomPayload;Lcpw/mods/fml/common/network/Player;)V";
     static final String WORLD  = "net/minecraft/world/World";
 
-    static boolean doCamo, doDetector;
-    static boolean hitGuard, hitClamp, hitDetector;
+    static boolean doCamo, doDetector, doListeners, doChunkLoad;
+    static boolean hitGuard, hitClamp, hitDetector, hitChunkLoad;
+    static int listenerHits;
 
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
             System.err.println("usage: PatchICBMContraption <in.jar> <out.jar> <patches> <VoltzContraption.class>");
-            System.err.println("patches: camouflage,detector");
+            System.err.println("patches: camouflage,detector,listeners,chunkload");
             System.exit(2);
         }
         for (String p : args[2].split(",")) {
             p = p.trim();
             if (p.equals("camouflage")) doCamo = true;
             else if (p.equals("detector")) doDetector = true;
+            else if (p.equals("listeners")) doListeners = true;
+            else if (p.equals("chunkload")) doChunkLoad = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -51,6 +60,8 @@ public class PatchICBMContraption {
             String n = ze.getName();
             if (doCamo && n.equals(CAMO + ".class")) d = patchCamouflage(d);
             if (doDetector && n.equals(DETECTOR + ".class")) d = patchDetector(d);
+            if (doListeners && n.equals(DETECTOR + ".class")) d = patchListeners(d);
+            if (doChunkLoad && n.equals(PACKETS + ".class")) d = patchChunkLoad(d);
             out.put(n, d);
         }
         zf.close();
@@ -58,6 +69,8 @@ public class PatchICBMContraption {
 
         if (doCamo && !(hitGuard && hitClamp)) throw new IllegalStateException("camouflage patch did not apply");
         if (doDetector && !hitDetector) throw new IllegalStateException("detector patch did not apply");
+        if (doListeners && listenerHits != 2) throw new IllegalStateException("listeners: expected a join and a tick send, found " + listenerHits);
+        if (doChunkLoad && !hitChunkLoad) throw new IllegalStateException("chunkload patch did not apply");
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
         for (Map.Entry<String, byte[]> en : out.entrySet()) {
@@ -152,6 +165,78 @@ public class PatchICBMContraption {
         }
         return write(cn);
     }
+
+    /**
+     * TYinGanQi.yongZhe: players with the detector GUI open, sent a description packet every 20
+     * ticks, joined from any distance and removed only when the client reports the GUI closed.
+     * The join becomes VoltzContraption.addListener (within reach), and the tick's walk over the
+     * set gets VoltzContraption.pruneListeners first.
+     */
+    static byte[] patchListeners(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.GETFIELD || !((FieldInsnNode) i).name.equals("yongZhe")) continue;
+                AbstractInsnNode nx = i.getNext();
+                while (nx != null && nx.getOpcode() < 0) nx = nx.getNext();
+                if (m.name.equals("func_70316_g") && nx instanceof MethodInsnNode && ((MethodInsnNode) nx).name.equals("iterator")) {
+                    InsnList prune = new InsnList();
+                    prune.add(new InsnNode(Opcodes.DUP));
+                    prune.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                    prune.add(new MethodInsnNode(Opcodes.INVOKESTATIC, HELPER, "pruneListeners", "(Ljava/util/Set;Ljava/lang/Object;)V", false));
+                    m.instructions.insert(i, prune);
+                    m.maxStack = m.maxStack + 2;
+                    listenerHits++;
+                } else if (m.name.equals("handlePacketData") && nx.getOpcode() == Opcodes.ALOAD && ((VarInsnNode) nx).var == 4) {
+                    AbstractInsnNode call = nx.getNext();
+                    while (call != null && call.getOpcode() < 0) call = call.getNext();
+                    if (!(call instanceof MethodInsnNode) || !((MethodInsnNode) call).name.equals("add")) continue;
+                    m.instructions.insertBefore(call, new VarInsnNode(Opcodes.ALOAD, 0));
+                    m.instructions.set(call, new MethodInsnNode(Opcodes.INVOKESTATIC, HELPER, "addListener",
+                            "(Ljava/util/Set;Ljava/lang/Object;Ljava/lang/Object;)Z", false));
+                    m.maxStack = m.maxStack + 1;
+                    listenerHits++;
+                }
+            }
+        }
+        return write(cn);
+    }
+
+    /**
+     * Adds an onPacketData(INetworkManager, Packet250CustomPayload, Player) override to the ICBM
+     * packet handler, gating the inherited router on {HELPER}.chunkGuard so a TILEENTITY packet
+     * aimed at an unloaded chunk is dropped instead of loading it. Only added when the class does
+     * not already define onPacketData.
+     */
+    static byte[] patchChunkLoad(byte[] in) {{
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {{
+            MethodNode em = (MethodNode) mo;
+            if (em.name.equals("onPacketData") && em.desc.equals(ON_PACKET_DESC))
+                throw new IllegalStateException("chunkload: WanYiPacketGuanLi already defines onPacketData");
+        }}
+        MethodNode m = new MethodNode(Opcodes.ACC_PUBLIC, "onPacketData", ON_PACKET_DESC, null, null);
+        LabelNode drop = new LabelNode();
+        InsnList g = m.instructions;
+        g.add(new VarInsnNode(Opcodes.ALOAD, 2));                                               // packet
+        g.add(new VarInsnNode(Opcodes.ALOAD, 3));                                               // player
+        g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, HELPER, "chunkGuard", "(Ljava/lang/Object;Ljava/lang/Object;)Z", false));
+        g.add(new JumpInsnNode(Opcodes.IFEQ, drop));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 2));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 3));
+        g.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, ROUTER, "onPacketData", ON_PACKET_DESC, false));
+        g.add(new LabelNode());
+        g.add(drop);
+        g.add(new InsnNode(Opcodes.RETURN));
+        m.maxStack = 4;
+        m.maxLocals = 4;
+        cn.methods.add(m);
+        hitChunkLoad = true;
+        return write(cn);
+    }}
 
     /** Frames are dropped on read; these are version 50 classes, verified by type inference. */
     static ClassNode read(byte[] b) {
