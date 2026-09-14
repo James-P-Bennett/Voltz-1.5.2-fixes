@@ -13,7 +13,9 @@ Each patch is selectable individually.
 | [MPS Addons 0.2.3](#mps-addons-023) | `magnet` |
 | [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` · `mergedupe` · `stabilizedupe` |
 | [Mekanism 5.5.6](#mekanism-556) | `chestcrash` · `chestdupe` · `chestremote` · `machinedupe` · `robitdupe` · `tntdupe` · `tntsource` · `timeitems` |
-| [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` · `remote` · `explosivetype` |
+| [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` · `remote` · `explosivetype` · `empradius` · `launchertier` |
+| [ICBM Sentry 1.2.1](#icbm-sentry-121) | `terminal` · `turretpackets` |
+| [ICBM Contraption 1.2.1](#icbm-contraption-121) | `camouflage` |
 | [Modular Powersuits 0.7.0](#modular-powersuits-070) | `blink` |
 | [MineFactoryReloaded 2.6.4](#minefactoryreloaded-264) | `ghostslot` |
 
@@ -685,14 +687,14 @@ MCPC+ the command ran through Bukkit (`* VTest voted for noon via VTest`).
 
 ## ICBM Explosion 1.2.1
 
-Four fixes: explosives that never stop or flood the server with entities, and an explosive
-block packet handler that trusts the client. The patcher rewrites five classes in
-`ICBM_Explosion_v1.2.1.172.jar` and adds `VoltzICBM`.
+Six fixes: explosives that never stop or flood the server with entities, and packet handlers
+that trust the client. The patcher rewrites nine classes in `ICBM_Explosion_v1.2.1.172.jar`
+and adds `VoltzICBM`.
 
 Verified with the same harness on the dedicated Forge server. On MCPC+ the explosions never
 ticked in the harness at all — Spigot's entity activation skips entities with no player
-nearby — so they were not exercised there. `remote` and `explosivetype` were tested on Forge
-only. None of the four has any platform-specific code.
+nearby — so they were not exercised there. `remote`, `explosivetype`, `empradius` and
+`launchertier` were tested on Forge only. None of the six has any platform-specific code.
 
 <details>
 <summary><b>1. <code>redmatter</code> — a Red Matter black hole never ends</b></summary>
@@ -797,6 +799,53 @@ test confirmed a client still applies the packet from the server.
 
 </details>
 
+<details>
+<summary><b>5. <code>empradius</code> — one packet freezes the server with an EMP tower</b></summary>
+
+**The bug.** The EMP tower's GUI sends its radius as a packet, and the server stores whatever
+number arrives. The tower declares `MAX_RADIUS = 150` and never uses it. When it fires, the
+radius goes straight into a cube-shaped block loop of `(2r+1)³` blocks: a radius of 100,000 is
+about 8×10¹⁵ iterations, and the server stops responding. The tower also accepts its full
+description packet from clients, which sets the charge, the EMP-disabled timer and the radius
+at once, on anyone's tower, from any distance.
+
+**The patch.** The server ignores the description packet, and every radius write (packet, NBT
+load, constructor) is clamped to 0–150, which also repairs a tower saved with a bad radius. The
+GUI's own radius and mode packets work as before.
+
+**Verified** on the Forge test server. The tower was never fired:
+
+| EMP tower packet | Stock | Patched |
+|---|---|---|
+| Radius 60 (GUI) | 60 | 60 |
+| Radius 100,000 | 100,000 | 150 |
+| Description packet with radius 7,000 | 7,000 | ignored |
+| Mode 1 (GUI) | 1 | 1 |
+
+</details>
+
+<details>
+<summary><b>6. <code>launchertier</code> — free launcher upgrades</b></summary>
+
+**The bug.** The launcher base, frame and screen accept their description packet from clients,
+and it sets their tier. A tier 0 base becomes tier 2: full missile range, and it drops as a
+tier 2 base when broken. The screen's packet also sets the launch height outside the 3–99
+range its GUI enforces.
+
+**The patch.** The server ignores those packets. The screen's frequency, target and height
+packets from its GUI are untouched.
+
+**Verified** on the Forge test server:
+
+| Launcher packet | Stock | Patched |
+|---|---|---|
+| Base, tier 2 | tier 2 | unchanged |
+| Frame, tier 2 | tier 2 | unchanged |
+| Screen description, tier 2 | tier 2 | unchanged |
+| Screen height 40 (GUI) | 40 | 40 |
+
+</details>
+
 `config/VoltzFixes-ICBM.cfg` covers `redmatter` and `sonic`. `0` restores the stock behaviour for either:
 
 ```
@@ -805,6 +854,87 @@ general {
     I:"Red Matter Max Ticks"=3000
 }
 ```
+
+---
+
+## ICBM Sentry 1.2.1
+
+Two fixes for turret platforms and turrets that obey any client. The patcher rewrites two
+classes in `ICBM_Sentry_v1.2.1.172.jar` and adds `VoltzSentry`. Tested on Forge only.
+
+<details>
+<summary><b>1. <code>terminal</code> — run platform commands as the owner, from anywhere</b></summary>
+
+**The bug.** A turret platform's terminal packet carries a username, and the server runs the
+command as that player:
+
+```java
+CommandRegistry.onCommand(world.getPlayerEntityByName(data.readUTF()), this, data.readUTF());
+```
+
+The packet's real sender is never looked at, and neither is distance. While a platform's owner
+is online, any client can `destroy` it, add itself as a user and raise itself to owner, or
+remove the owner, from anywhere in the dimension.
+
+**The patch.** The command runs as the player who sent the packet, and only within 8 blocks of
+the platform. Out of reach it is dropped and logged:
+
+```
+[VoltzFixes] refused terminal command at 1537,200,-56 sent as VOwner (500 blocks away) from VTest
+```
+
+**Verified** on the Forge test server, with `VOwner` listed as the platform's owner:
+
+| `destroy` command | Stock | Patched |
+|---|---|---|
+| Attacker 500 blocks away, sent as `VOwner` | destroyed | refused |
+| `VOwner`, 3 blocks away | destroyed | destroyed |
+| Attacker 3 blocks away, sent as `VOwner` | destroyed | access denied |
+
+</details>
+
+<details>
+<summary><b>2. <code>turretpackets</code> — set any turret's health, aim or saved data</b></summary>
+
+**The bug.** Every turret packet (rotation, NBT description, shot, health) is one the server
+sends to clients, but the server applies them from clients too. Any client can make a turret
+unkillable or switch it off through its health, aim someone else's railgun, or load arbitrary
+NBT into a turret, including coordinates that later make its `destroy` delete a block
+somewhere else.
+
+**The patch.** The server ignores turret packets. No real client sends one.
+
+**Verified** on the same server: a health packet of 12,345 set a gun turret's health on stock,
+and was ignored when patched.
+
+</details>
+
+## ICBM Contraption 1.2.1
+
+One fix, for the camouflage block. The patcher rewrites one class in
+`ICBM_Contraption_v1.2.1.172.jar` and adds `VoltzContraption`. Tested on Forge only.
+
+<details>
+<summary><b><code>camouflage</code> — crash every nearby player with one packet</b></summary>
+
+**The bug.** The camouflage block's packet sets the block it disguises as, which sides are
+see-through and whether it is solid. Only the server should send it, but the server applies it
+from any client, at any distance, and saves it. A block id past the end of the block list is
+then sent to every client, whose renderer looks it up without a bounds check and crashes, again
+each time the chunk loads. Setting "not solid" also lets anyone walk through someone else's
+camouflage wall.
+
+**The patch.** The server ignores the packet. A block id outside the block list is reset to 0
+when the block loads, so blocks poisoned before the patch stop crashing clients.
+
+**Verified** on the Forge test server:
+
+| Camouflage block | Stock | Patched |
+|---|---|---|
+| Packet setting block id 5000 | saved 5000 | ignored |
+| Loaded from NBT with block id 5000 | 5000 | 0 |
+
+</details>
 
 ---
 
@@ -898,8 +1028,8 @@ exercised on a live server.
 Builds every patched jar, skipping any whose source jar is missing. Needs `javac`
 (any version), a Java 8 `javac` for the helper classes, ASM, and `curl` on first run.
 
-Override paths with `MODS`, `AS_SRC`, `MPSA_SRC`, `MFFS_SRC`, `MEK_SRC`, `ICBM_SRC`, `MPS_SRC`,
-`MFR_SRC`, `FORGE`, `ASM`, `JAVAC8`.
+Override paths with `MODS`, `AS_SRC`, `MPSA_SRC`, `MFFS_SRC`, `MEK_SRC`, `ICBM_SRC`, `ICBMS_SRC`, `ICBMC_SRC`,
+`MPS_SRC`, `MFR_SRC`, `FORGE`, `ASM`, `JAVAC8`.
 
 Helper classes compile against the **Forge universal zip**, downloaded into `build/` once
 and cached — deliberately not against the launcher's `bin/minecraft.jar`, which PolyMC
@@ -932,6 +1062,8 @@ the stock ones:
 | `MPSA-0.2.3-144_MPS-531+.jar` | `MPSA-0.2.3-144_MPS-531+-patched.jar` |
 | `Mekanism-v5.5.6.bugfix1.jar` | `Mekanism-v5.5.6.bugfix1-patched.jar` |
 | `ICBM_Explosion_v1.2.1.172.jar` | `ICBM_Explosion_v1.2.1.172-patched.jar` |
+| `ICBM_Sentry_v1.2.1.172.jar` | `ICBM_Sentry_v1.2.1.172-patched.jar` |
+| `ICBM_Contraption_v1.2.1.172.jar` | `ICBM_Contraption_v1.2.1.172-patched.jar` |
 | `ModularPowersuits-0.7.0-534.jar` | `ModularPowersuits-0.7.0-534-patched.jar` |
 | `MineFactoryReloaded-2.6.4-975.jar` | `MineFactoryReloaded-2.6.4-975-patched.jar` |
 
@@ -947,6 +1079,7 @@ runs on the server:
   authoritative, which is the whole reason that fix is needed
 - the Mekanism fixes are in packet handlers, server-side GUI checks and tile entity methods
 - ICBM explosions and the Blink Drive teleport are resolved on the server
+- the ICBM packet checks are in the server's packet handlers; clients still apply the same packets from the server
 - the MFR ghost slot check is in MFR's server packet handler
 
 FML 1.5.2 matches mods on modid and version strings, not file hashes, and neither is
@@ -1000,6 +1133,19 @@ ICBM_Explosion_v1.2.1.172-patched.jar
           icbm/zhapin/zhapin/ex/ExShengBuo.class      queue dedupe, flying block cap
           icbm/zhapin/zhapin/ex/ExChaoShengBuo.class  queue dedupe, flying block cap
           icbm/zhapin/zhapin/TZhaDan.class            remote and set-type packet checks
+          icbm/zhapin/jiqi/TDianCiQi.class            EMP tower packet, radius clamp
+          icbm/zhapin/jiqi/TFaSheDi.class             launcher tier packet
+          icbm/zhapin/jiqi/TFaSheJia.class            launcher tier packet
+          icbm/zhapin/jiqi/TFaSheShiMuo.class         launcher screen description packet
+
+ICBM_Sentry_v1.2.1.172-patched.jar
+  added   icbm/gangshao/VoltzSentry.class
+  changed icbm/gangshao/terminal/TileEntityTerminal.class  command sender and reach
+          icbm/gangshao/turret/TPaoDaiBase.class           turret packets ignored on the server
+
+ICBM_Contraption_v1.2.1.172-patched.jar
+  added   icbm/wanyi/VoltzContraption.class
+  changed icbm/wanyi/b/TYinXing.class                     packet ignored on the server, id clamp
           icbm/zhapin/ZhuYaoZhaPin.class              config init hook
 
 ModularPowersuits-0.7.0-534-patched.jar

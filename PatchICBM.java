@@ -16,6 +16,10 @@ import java.util.zip.*;
  *   remote      TZhaDan.handlePacketData   detonate packet refused unless
  *                                         VoltzICBM.remoteAllowed(tile, player, ...)
  *   explosivetype TZhaDan.handlePacketData set-type packet (ID 1) ignored on the server
+ *   empradius   TDianCiQi                  settings packet (ID 1) ignored on the server; every
+ *                                         banJing write clamped by VoltzICBM.empRadius
+ *   launchertier TFaSheDi / TFaSheJia      tier packet ignored on the server
+ *                TFaSheShiMuo              description packet (ID 0) ignored on the server
  *
  * Red matter's doBaoZha returns true unconditionally, so the black hole never ends. It is
  * saved with the chunk and rescans a radius-35 sphere every tick forever.
@@ -45,6 +49,10 @@ public class PatchICBM {
     static final String REMOTE     = "icbm/zhapin/dianqi/ItYaoKong";
     static final String ELECTRIC   = "universalelectricity/core/item/ItemElectric";
     static final String CFG_CLASS  = "icbm/zhapin/VoltzICBM";
+    static final String EMP_CLASS     = "icbm/zhapin/jiqi/TDianCiQi";
+    static final String LAUNCH_BASE   = "icbm/zhapin/jiqi/TFaSheDi";
+    static final String LAUNCH_FRAME  = "icbm/zhapin/jiqi/TFaSheJia";
+    static final String LAUNCH_SCREEN = "icbm/zhapin/jiqi/TFaSheShiMuo";
 
     static final String WORLD      = "net/minecraft/world/World";
     static final String SPAWN      = "func_72838_d";   // World.spawnEntityInWorld
@@ -57,15 +65,16 @@ public class PatchICBM {
     static final int L_SOURCE    = 3;
     static final int L_CALLCOUNT = 5;
 
-    static boolean doRed, doSonic, doRemote, doType;
-    static boolean hitRed, hitInit, hitRemote, hitType;
+    static boolean doRed, doSonic, doRemote, doType, doEmp, doLauncher;
+    static boolean hitRed, hitInit, hitRemote, hitType, hitEmp;
+    static final Set<String> launcherHits = new HashSet<String>();
     static final Set<String> sonicAdds = new HashSet<String>();
     static final Set<String> sonicSpawns = new HashSet<String>();
 
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
             System.err.println("usage: PatchICBM <in.jar> <out.jar> <patches> <VoltzICBM.class>");
-            System.err.println("patches: redmatter,sonic,remote,explosivetype");
+            System.err.println("patches: redmatter,sonic,remote,explosivetype,empradius,launchertier");
             System.exit(2);
         }
         for (String p : args[2].split(",")) {
@@ -74,6 +83,8 @@ public class PatchICBM {
             else if (p.equals("sonic")) doSonic = true;
             else if (p.equals("remote")) doRemote = true;
             else if (p.equals("explosivetype")) doType = true;
+            else if (p.equals("empradius")) doEmp = true;
+            else if (p.equals("launchertier")) doLauncher = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -89,6 +100,10 @@ public class PatchICBM {
             if (doSonic && n.equals(HYPERSONIC + ".class")) d = patchSonic(d, HYPERSONIC);
             if (doRemote && n.equals(TILE_CLASS + ".class")) d = patchRemote(d);
             if (doType && n.equals(TILE_CLASS + ".class"))   d = patchExplosiveType(d);
+            if (doEmp && n.equals(EMP_CLASS + ".class"))     d = patchEmp(d);
+            if (doLauncher && (n.equals(LAUNCH_BASE + ".class") || n.equals(LAUNCH_FRAME + ".class")))
+                d = patchLauncherPart(d, n);
+            if (doLauncher && n.equals(LAUNCH_SCREEN + ".class")) d = patchLauncherScreen(d);
             if (n.equals(MAIN_CLASS + ".class"))            d = patchInitHook(d);
             out.put(n, d);
         }
@@ -104,6 +119,9 @@ public class PatchICBM {
         }
         if (doRemote && !hitRemote) throw new IllegalStateException("remote patch did not apply");
         if (doType && !hitType) throw new IllegalStateException("explosivetype patch did not apply");
+        if (doEmp && !hitEmp) throw new IllegalStateException("empradius patch did not apply");
+        if (doLauncher && launcherHits.size() != 3)
+            throw new IllegalStateException("launchertier patch applied to " + launcherHits + ", expected 3 classes");
         if (!hitInit) throw new IllegalStateException("config init hook did not apply");
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
@@ -289,6 +307,121 @@ public class PatchICBM {
             if (hits != 1) throw new IllegalStateException("explosivetype: expected 1 packet ID read, found " + hits);
             m.maxStack = Math.max(m.maxStack, 2);
             hitType = true;
+        }
+        return write(cn);
+    }
+
+    /**
+     * The guard used by empradius and launchertier:
+     *
+     *     if ([packetId == id &&] !this.worldObj.isRemote) {
+     *         VoltzICBM.serverPacketRefused(this, player, what);
+     *         return;
+     *     }
+     *
+     * idVar < 0 guards every packet.
+     */
+    static InsnList refuseOnServer(String owner, int idVar, int id, String what) {
+        LabelNode carryOn = new LabelNode();
+        InsnList g = new InsnList();
+        if (idVar >= 0) {
+            g.add(new VarInsnNode(Opcodes.ILOAD, idVar));
+            g.add(new LdcInsnNode(Integer.valueOf(id)));
+            g.add(new JumpInsnNode(Opcodes.IF_ICMPNE, carryOn));
+        }
+        g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        g.add(new FieldInsnNode(Opcodes.GETFIELD, owner, "field_70331_k", "L" + WORLD + ";"));
+        g.add(new FieldInsnNode(Opcodes.GETFIELD, WORLD, "field_72995_K", "Z"));   // World.isRemote
+        g.add(new JumpInsnNode(Opcodes.IFNE, carryOn));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        g.add(new VarInsnNode(Opcodes.ALOAD, 4));
+        g.add(new LdcInsnNode(what));
+        g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "serverPacketRefused",
+                "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/String;)V", false));
+        g.add(new InsnNode(Opcodes.RETURN));
+        g.add(carryOn);
+        return g;
+    }
+
+    /** the ISTORE right after the first readInt in handlePacketData: the packet ID, or null */
+    static VarInsnNode packetIdStore(MethodNode m) {
+        for (AbstractInsnNode i : m.instructions.toArray()) {
+            if (i.getOpcode() != Opcodes.INVOKEINTERFACE || !((MethodInsnNode) i).name.equals("readInt")) continue;
+            AbstractInsnNode n = i.getNext();
+            while (n != null && n.getOpcode() < 0) n = n.getNext();
+            return n != null && n.getOpcode() == Opcodes.ISTORE ? (VarInsnNode) n : null;
+        }
+        return null;
+    }
+
+    /**
+     * TDianCiQi, the EMP tower. Its packet 1 is the server's description packet - joules,
+     * disabled ticks, radius and mode - and packet 2 sets the radius from the GUI. The server
+     * applies both from any client, with no cap: MAX_RADIUS (150) is declared and never used,
+     * and onPowerOn feeds the radius straight into a (2r+1)^3 block loop. Packet 1 is now
+     * ignored on the server, and every write to banJing - constructor, both packets and NBT
+     * load - goes through VoltzICBM.empRadius, which also repairs towers saved with a bad radius.
+     */
+    static byte[] patchEmp(byte[] in) {
+        ClassNode cn = read(in);
+        int clamps = 0, guards = 0;
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.PUTFIELD) continue;
+                FieldInsnNode f = (FieldInsnNode) i;
+                if (!f.owner.equals(EMP_CLASS) || !f.name.equals("banJing") || !f.desc.equals("I")) continue;
+                m.instructions.insertBefore(i, new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "empRadius", "(I)I", false));
+                clamps++;
+            }
+            if (m.name.equals("handlePacketData")) {
+                VarInsnNode store = packetIdStore(m);
+                if (store == null) throw new IllegalStateException("empradius: no packet ID read in handlePacketData");
+                m.instructions.insert(store, refuseOnServer(EMP_CLASS, store.var, 1, "EMP tower settings packet"));
+                m.maxStack = Math.max(m.maxStack, 3);
+                guards++;
+            }
+        }
+        if (clamps != 4 || guards != 1)
+            throw new IllegalStateException("empradius: expected 4 radius writes and 1 handler, found " + clamps + " and " + guards);
+        hitEmp = true;
+        return write(cn);
+    }
+
+    /**
+     * TFaSheDi (launcher base) and TFaSheJia (launcher frame). Their only packet is the
+     * server's description packet, `orientation = readByte(); tier = readInt();`, and the
+     * server applies it from any client: a tier 0 base becomes tier 2, with full range, and
+     * drops as a tier 2 base when broken. Ignored on the server.
+     */
+    static byte[] patchLauncherPart(byte[] in, String entry) {
+        ClassNode cn = read(in);
+        String owner = entry.substring(0, entry.length() - ".class".length());
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("handlePacketData")) continue;
+            m.instructions.insert(refuseOnServer(owner, -1, 0, "launcher tier packet"));
+            m.maxStack = Math.max(m.maxStack, 3);
+            launcherHits.add(owner);
+        }
+        return write(cn);
+    }
+
+    /**
+     * TFaSheShiMuo (launcher screen). Packet 0 is the server's description packet: facing,
+     * tier, frequency and launch height, the height skipping the 3..99 clamp packet 3 uses.
+     * Ignored on the server; the GUI's own packets (-1, 1, 2, 3) are untouched.
+     */
+    static byte[] patchLauncherScreen(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("handlePacketData")) continue;
+            VarInsnNode store = packetIdStore(m);
+            if (store == null) throw new IllegalStateException("launchertier: no packet ID read in TFaSheShiMuo");
+            m.instructions.insert(store, refuseOnServer(LAUNCH_SCREEN, store.var, 0, "launcher screen description packet"));
+            m.maxStack = Math.max(m.maxStack, 3);
+            launcherHits.add(LAUNCH_SCREEN);
         }
         return write(cn);
     }
