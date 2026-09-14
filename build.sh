@@ -20,6 +20,7 @@ MFFS_SRC="${MFFS_SRC:-$MODS/MFFS_v3.1.0.175.jar}"
 MEK_SRC="${MEK_SRC:-$MODS/Mekanism-v5.5.6.bugfix1.jar}"
 ICBM_SRC="${ICBM_SRC:-$MODS/ICBM_Explosion_v1.2.1.172.jar}"
 MPS_SRC="${MPS_SRC:-$MODS/ModularPowersuits-0.7.0-534.jar}"
+MFR_SRC="${MFR_SRC:-$MODS/MineFactoryReloaded-2.6.4-975.jar}"
 
 ASM="${ASM:-$HOME/.local/share/PolyMC/libraries/org/ow2/asm/asm-all/5.0.3/asm-all-5.0.3.jar}"
 JAVAC8="${JAVAC8:-/usr/lib/jvm/java-8-openjdk/bin/javac}"
@@ -72,6 +73,7 @@ compile8 src/mekanism/common/VoltzMekanism.java
 compile8 src/mekanism/common/BalancedTimeItems.java
 compile8 src/icbm/zhapin/VoltzICBM.java
 compile8 src/net/machinemuse/powersuits/VoltzMPS.java
+compile8 src/powercrystals/minefactoryreloaded/VoltzMFR.java
 
 for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
          build/cls/andrew/powersuits/VoltzMagnetConfig.class \
@@ -79,7 +81,8 @@ for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
          build/cls/mekanism/common/VoltzMekanism.class \
          build/cls/mekanism/common/BalancedTimeItems.class \
          build/cls/icbm/zhapin/VoltzICBM.class \
-         build/cls/net/machinemuse/powersuits/VoltzMPS.class; do
+         build/cls/net/machinemuse/powersuits/VoltzMPS.class \
+         build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class; do
   [ -f "$f" ] || { echo "helper class missing after compile: $f" >&2; exit 1; }
 done
 
@@ -104,3 +107,7 @@ patch_one "ICBM Explosion" "$ICBM_SRC" "ICBM_Explosion_v1.2.1.172-patched.jar" \
 patch_one "Modular Powersuits" "$MPS_SRC" "ModularPowersuits-0.7.0-534-patched.jar" \
           PatchMPS.java  build/cls/net/machinemuse/powersuits/VoltzMPS.class \
           "blink"
+
+patch_one "MineFactoryReloaded" "$MFR_SRC" "MineFactoryReloaded-2.6.4-975-patched.jar" \
+          PatchMFR.java  build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class \
+          "ghostslot"
