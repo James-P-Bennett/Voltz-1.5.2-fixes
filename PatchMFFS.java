@@ -20,6 +20,9 @@ import java.util.zip.*;
  * Admins can then deny Anti-Personnel and Confiscate around spawn, shops and public
  * areas instead of banning the modules outright.
  *
+ * It also fixes the Interdiction Matrix merge dupe (fixMerge below): confiscated and
+ * Anti-Personnel stacks were multiplied by MFR conveyors next to the matrix.
+ *
  * usage: PatchMFFS <in.jar> <out.jar> <VoltzZones.class>
  */
 public class PatchMFFS {
@@ -28,6 +31,7 @@ public class PatchMFFS {
     static final String MOD_CLASS  = "mffs/ModularForceFieldSystem";
     static final String PKG        = "mffs/item/module/interdiction/";
     static final String MATRIX_TE  = "mffs/tileentity/TileEntityInterdictionMatrix";
+    static final String INVENTORY_TE = "mffs/base/TileEntityInventory";
 
     static final String ATTACK       = "func_70097_a";   // Entity.attackEntityFrom
     static final String ATTACK_DESC  = "(Lnet/minecraft/util/DamageSource;I)Z";
@@ -54,7 +58,7 @@ public class PatchMFFS {
     };
 
     static final Set<String> patched = new HashSet<String>();
-    static boolean hitInit, hitKill, hitTaken, hitTick;
+    static boolean hitInit, hitKill, hitTaken, hitTick, hitMerge;
 
     public static void main(String[] args) throws Exception {
         if (args.length < 3) {
@@ -76,6 +80,7 @@ public class PatchMFFS {
             if (n.equals(PKG + "ItemModuleConfiscate.class"))    d = logTaken(d);
             if (n.equals(MATRIX_TE + ".class"))                  d = logMatrix(d);
             if (n.equals(MOD_CLASS + ".class")) d = initHook(d);
+            if (n.equals(INVENTORY_TE + ".class"))               d = fixMerge(d);
             out.put(n, d);
         }
         zf.close();
@@ -88,6 +93,7 @@ public class PatchMFFS {
         if (!hitKill)  throw new IllegalStateException("kill log hook did not apply");
         if (!hitTaken) throw new IllegalStateException("confiscate log hook did not apply");
         if (!hitTick)  throw new IllegalStateException("matrix load hook did not apply");
+        if (!hitMerge) throw new IllegalStateException("merge dupe fix did not apply");
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
         for (Map.Entry<String, byte[]> en : out.entrySet()) {
@@ -206,6 +212,56 @@ public class PatchMFFS {
             hitTick = true;
         }
         return write(cn);
+    }
+
+    /**
+     * TileEntityInventory.addStackToInventory - used by the matrix to store everything
+     * Confiscate and Anti-Personnel take - puts the stack into an empty slot and then
+     * re-reads the slot to decide whether it was accepted:
+     *
+     *     inventory.setInventorySlotContents(slot, stack);
+     *     if (inventory.getStackInSlot(slot) == null) return stack;   // "refused", keep it
+     *     return null;
+     *
+     * An MFR conveyor spawns the item on the belt and always reports an empty slot. The
+     * matrix keeps the whole stack, offers it to the next slot and side, and finally drops
+     * it on top of itself, so every stack comes out as one copy per accepting belt plus the
+     * original. Vanilla hoppers and pipes count an insert into an empty slot as done; this
+     * does the same by returning null straight after the set.
+     */
+    static byte[] fixMerge(byte[] in) {
+        ClassNode cn = new ClassNode();
+        new ClassReader(in).accept(cn, ClassReader.SKIP_FRAMES);
+        for (Object o : cn.methods) {
+            MethodNode m = (MethodNode) o;
+            if (!m.name.equals("addStackToInventory")
+                    || !m.desc.equals("(ILnet/minecraft/inventory/IInventory;Lnet/minecraft/item/ItemStack;)Lnet/minecraft/item/ItemStack;"))
+                continue;
+            int hits = 0;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.INVOKEINTERFACE || !((MethodInsnNode) i).name.equals("func_70299_a")) continue;
+                AbstractInsnNode a = real(i.getNext()), b = real(a.getNext()), c = real(b.getNext()), d = real(c.getNext());
+                if (a.getOpcode() != Opcodes.ALOAD || b.getOpcode() != Opcodes.ILOAD
+                        || !(c instanceof MethodInsnNode) || !((MethodInsnNode) c).name.equals("func_70301_a")
+                        || d.getOpcode() != Opcodes.IFNONNULL) continue;
+                InsnList accept = new InsnList();
+                accept.add(new InsnNode(Opcodes.ACONST_NULL));
+                accept.add(new InsnNode(Opcodes.ARETURN));
+                m.instructions.insert(i, accept);
+                hits++;
+            }
+            if (hits != 1) throw new IllegalStateException("merge dupe fix: expected 1 re-read after insert, found " + hits);
+            hitMerge = true;
+        }
+        ClassWriter cw = new ClassWriter(0);
+        cn.accept(cw);
+        return cw.toByteArray();
+    }
+
+    /** skip labels, line numbers and frames, which sit between real instructions */
+    static AbstractInsnNode real(AbstractInsnNode n) {
+        while (n != null && n.getOpcode() < 0) n = n.getNext();
+        return n;
     }
 
     static byte[] initHook(byte[] in) {

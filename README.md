@@ -11,7 +11,7 @@ Each patch is selectable individually.
 |---|---|
 | [Atomic Science v0.6.2.117](#atomic-science-v062117) | `assemblerwear` · `syncspawn` · `plasma` · `noblastdamage` |
 | [MPS Addons 0.2.3](#mps-addons-023) | `magnet` |
-| [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` |
+| [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` · `mergedupe` |
 | [Mekanism 5.5.6](#mekanism-556) | `chestcrash` · `chestdupe` · `chestremote` · `machinedupe` · `robitdupe` · `tntdupe` · `tntsource` · `timeitems` |
 | [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` |
 | [Modular Powersuits 0.7.0](#modular-powersuits-070) | `blink` |
@@ -379,6 +379,43 @@ Kept quiet deliberately:
 - **Confiscations** are hooked per stack, giving the real item and count.
 
 `logging off` in the config disables all of it.
+
+</details>
+
+<details>
+<summary><b><code>mergedupe</code> — conveyor belts multiply everything the matrix takes</b></summary>
+
+**The bug.** Confiscate and Anti-Personnel hand every stack they take to the matrix, which
+offers it to each adjacent inventory through `TileEntityInventory.addStackToInventory`:
+
+```java
+inventory.setInventorySlotContents(slot, stack);
+if (inventory.getStackInSlot(slot) == null) return stack;   // "refused" - keep it
+return null;
+```
+
+An MineFactoryReloaded conveyor belt is an inventory whose insert drops a **copy** of the item
+on the belt, and whose slots always read empty. So the matrix treats every insert as refused,
+offers the same stack to the next side, and finally drops it on top of itself. Each stack
+comes out once per accepting belt plus the original. Stand on the belts in range and the
+copies come straight back to be taken again, every 10 ticks.
+
+A belt on top of the matrix, or running past its side, accepts. A flat belt pointing straight
+into it refuses its front face and does not dupe.
+
+**The patch.** An insert into an empty slot counts as done, as it does for vanilla hoppers
+and pipes.
+
+**Verified.** One matrix merge of 64 diamonds, on the Forge test server:
+
+| Belt next to the matrix | Stock | Patched |
+|---|---|---|
+| On top | 128 | 64 |
+| Running past the side | 128 | 64 |
+| Flat, pointing in | 64 | 64 |
+| None | 64 | 64 |
+
+In game on stock, one stack filled a 31-slot inventory within a minute.
 
 </details>
 
