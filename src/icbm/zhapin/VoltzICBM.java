@@ -221,6 +221,27 @@ public class VoltzICBM {
         refused(player, "explosive type change at " + where + " (only the server sends that packet)");
     }
 
+    // ------------------------------------------------------ server-only packets
+
+    /** TDianCiQi.MAX_RADIUS, which the stock tower declares and never enforces. */
+    public static int empRadius(int radius) {
+        return radius < 0 ? 0 : (radius > 150 ? 150 : radius);
+    }
+
+    /**
+     * Inserted where a machine's packet handler would apply, on the server, a packet that only
+     * the server sends. The packet is dropped.
+     */
+    public static void serverPacketRefused(Object tile, Object player, String what) {
+        String where;
+        try {
+            where = field(tile, "field_70329_l") + "," + field(tile, "field_70330_m") + "," + field(tile, "field_70327_n");
+        } catch (Throwable t) {
+            where = "?";
+        }
+        refused(player, what + " at " + where + " (only the server sends that packet)");
+    }
+
     private static Object field(Object o, String name) throws Exception {
         for (Class k = o.getClass(); k != null; k = k.getSuperclass()) {
             try {

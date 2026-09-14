@@ -5,7 +5,7 @@
 #   ./build.sh <AS.jar>        override just the Atomic Science source jar
 #
 # Override any path with an env var:
-#   MODS  AS_SRC  MPSA_SRC  MFFS_SRC  MEK_SRC  ICBM_SRC  MPS_SRC  FORGE  ASM  JAVAC8
+#   MODS  AS_SRC  MPSA_SRC  MFFS_SRC  MEK_SRC  ICBM_SRC  ICBMS_SRC  ICBMC_SRC  MPS_SRC  MFR_SRC  FORGE  ASM  JAVAC8
 #
 # Helper classes are compiled against the Forge universal zip, NOT against the launcher's
 # bin/minecraft.jar - PolyMC rewrites that file on every launch, so a build depending on it
@@ -19,6 +19,8 @@ MPSA_SRC="${MPSA_SRC:-$MODS/MPSA-0.2.3-144_MPS-531+.jar}"
 MFFS_SRC="${MFFS_SRC:-$MODS/MFFS_v3.1.0.175.jar}"
 MEK_SRC="${MEK_SRC:-$MODS/Mekanism-v5.5.6.bugfix1.jar}"
 ICBM_SRC="${ICBM_SRC:-$MODS/ICBM_Explosion_v1.2.1.172.jar}"
+ICBMS_SRC="${ICBMS_SRC:-$MODS/ICBM_Sentry_v1.2.1.172.jar}"
+ICBMC_SRC="${ICBMC_SRC:-$MODS/ICBM_Contraption_v1.2.1.172.jar}"
 MPS_SRC="${MPS_SRC:-$MODS/ModularPowersuits-0.7.0-534.jar}"
 MFR_SRC="${MFR_SRC:-$MODS/MineFactoryReloaded-2.6.4-975.jar}"
 
@@ -72,6 +74,8 @@ compile8 src/mffs/BalancedMFFS.java
 compile8 src/mekanism/common/VoltzMekanism.java
 compile8 src/mekanism/common/BalancedTimeItems.java
 compile8 src/icbm/zhapin/VoltzICBM.java
+compile8 src/icbm/gangshao/VoltzSentry.java
+compile8 src/icbm/wanyi/VoltzContraption.java
 compile8 src/net/machinemuse/powersuits/VoltzMPS.java
 compile8 src/powercrystals/minefactoryreloaded/VoltzMFR.java
 
@@ -81,6 +85,8 @@ for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
          build/cls/mekanism/common/VoltzMekanism.class \
          build/cls/mekanism/common/BalancedTimeItems.class \
          build/cls/icbm/zhapin/VoltzICBM.class \
+         build/cls/icbm/gangshao/VoltzSentry.class \
+         build/cls/icbm/wanyi/VoltzContraption.class \
          build/cls/net/machinemuse/powersuits/VoltzMPS.class \
          build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class; do
   [ -f "$f" ] || { echo "helper class missing after compile: $f" >&2; exit 1; }
@@ -102,11 +108,19 @@ patch_one "Mekanism"       "$MEK_SRC"  "Mekanism-v5.5.6.bugfix1-patched.jar" \
 
 patch_one "ICBM Explosion" "$ICBM_SRC" "ICBM_Explosion_v1.2.1.172-patched.jar" \
           PatchICBM.java build/cls/icbm/zhapin/VoltzICBM.class \
-          "redmatter,sonic,remote,explosivetype"
+          "redmatter,sonic,remote,explosivetype,empradius,launchertier"
 
 patch_one "Modular Powersuits" "$MPS_SRC" "ModularPowersuits-0.7.0-534-patched.jar" \
           PatchMPS.java  build/cls/net/machinemuse/powersuits/VoltzMPS.class \
           "blink"
+
+patch_one "ICBM Sentry"    "$ICBMS_SRC" "ICBM_Sentry_v1.2.1.172-patched.jar" \
+          PatchICBMSentry.java build/cls/icbm/gangshao/VoltzSentry.class \
+          "terminal,turretpackets"
+
+patch_one "ICBM Contraption" "$ICBMC_SRC" "ICBM_Contraption_v1.2.1.172-patched.jar" \
+          PatchICBMContraption.java build/cls/icbm/wanyi/VoltzContraption.class \
+          "camouflage"
 
 patch_one "MineFactoryReloaded" "$MFR_SRC" "MineFactoryReloaded-2.6.4-975-patched.jar" \
           PatchMFR.java  build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class \
