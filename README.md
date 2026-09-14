@@ -1357,31 +1357,31 @@ payload through `NetworkRegistry.handleCustomPacket`. For a mod channel (not `FM
 `handler.getPlayer()` — which is null during login, because no player entity exists yet. A
 modified client that sends such a packet before it has logged in crashes the server thread.
 
-This is not a mod bug — it lives in the Forge/FML core, so it is not one of the mod-jar patches
-above and is not built by `./build.sh`.
+This is not a mod bug — it lives in the Forge/FML core, so instead of a mod-jar patch it ships as
+a **coremod**, `VoltzLoginGuard.jar` (built by `./build.sh` from `src/voltz/loginguard/`).
 
-**On MCPC+ (the usual Voltz server): already fixed by a plugin.** The `LoginSeqFix` +
-`ProtocolLib` plugins that ship in the preconfigured Voltz server's `plugins/` folder drop
-out-of-order login-phase custom payloads. That is the right layer for MCPC+; keep them enabled.
-MCPC+ also defaults `load-chunk-on-request: false` in `mcpc.yml`, a second reason the ICBM
-`chunkload` guard is belt-and-suspenders there.
-
-**On a plain-Forge server (no plugin layer): `PatchForgeLogin`.** It adds one guard to
+**The patch.** The coremod's class transformer adds one guard to
 `NetworkRegistry.handleCustomPacket` — the mod-packet branch returns instead of dispatching when
-`getPlayer()` is null — leaving the `REGISTER`/`UNREGISTER` login registration untouched. Run it
-against your own Forge universal zip and install the result as the server's Forge:
+`getPlayer()` is null — leaving the `REGISTER`/`UNREGISTER` login registration untouched. It is
+naming-agnostic (it matches FML's own stable method names and copies the `getPlayer()` call
+already in the method), so the same jar transforms the class in both the obfuscated (plain Forge)
+and deobfuscated (MCPC+) runtime environments. If the insertion point is ever not found it logs
+and leaves the class unchanged, so it can never stop the server from starting.
 
-```sh
-javac -cp "$ASM" -d build/tool PatchForgeLogin.java
-java -cp "$ASM:build/tool" PatchForgeLogin forge-1.5.2-universal.zip forge-1.5.2-universal-loginguard.zip
-```
+**Install.** Drop `VoltzLoginGuard.jar` in the server's `coremods/` folder (plain Forge or
+MCPC+). No ProtocolLib, no Bukkit plugin, no patched Forge install. On boot it logs
+`[VoltzLoginGuard] patched NetworkRegistry.handleCustomPacket`.
 
-**UNTESTED.** This is the one patch here that could not be exercised: reproducing it needs a
-modified client sending an out-of-order login packet, which the server-side harness (it injects
-an already-logged-in fake player) cannot do. The guard is copied from the exact `getPlayer()`
-call in the same method and the patched class passes an ASM verifier, but it has not run on a
-live server. It is plain-Forge only — a Forge server runs obfuscated, matching the packed
-names; MCPC+ runs deobfuscated and uses the plugin instead.
+**Verified** on both a plain-Forge 1.5.2 server and an MCPC+ (Legacy-653) server: the coremod
+loads, the transform applies in each environment, the server reaches "Done", and the full ICBM
+harness still passes `fails=0` — so normal post-login packet dispatch is intact. The patched
+class also passes an ASM verifier.
+
+**One caveat, stated plainly:** the *malicious* half — a modified client actually sending an
+out-of-order login packet — was **not** reproduced, because the server-side harness injects an
+already-logged-in player and cannot send a login-phase packet, and no graphical client is
+drivable here. The guard is confirmed to apply and to leave normal operation intact on both
+platforms; it has not been hit by a live exploit attempt.
 
 </details>
 
