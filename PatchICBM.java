@@ -20,6 +20,12 @@ import java.util.zip.*;
  *                                         banJing write clamped by VoltzICBM.empRadius
  *   launchertier TFaSheDi / TFaSheJia      tier packet ignored on the server
  *                TFaSheShiMuo              description packet (ID 0) ignored on the server
+ *   multiblock  TFaSheDi / TFaSheJia / TDianCiQi / TLeiDaTai
+ *                                         onActivated needs reach, onDestroy needs an adjacent dummy
+ *   cruiselauncher TXiaoFaSheQi            description packet (ID 0) ignored on the server
+ *   designator  ZhaPinPacketGuanLi         laser designator packet checked by VoltzICBM.designatorAllowed
+ *   defuser     ItJieJa.onLeftClickEntity  dead entities ignored
+ *   missilestack TFaSheDi / TXiaoFaSheQi   onActivated loads one missile from the held stack
  *
  * Red matter's doBaoZha returns true unconditionally, so the black hole never ends. It is
  * saved with the chunk and rescans a radius-35 sphere every tick forever.
@@ -53,6 +59,14 @@ public class PatchICBM {
     static final String LAUNCH_BASE   = "icbm/zhapin/jiqi/TFaSheDi";
     static final String LAUNCH_FRAME  = "icbm/zhapin/jiqi/TFaSheJia";
     static final String LAUNCH_SCREEN = "icbm/zhapin/jiqi/TFaSheShiMuo";
+    static final String CRUISE        = "icbm/zhapin/jiqi/TXiaoFaSheQi";
+    static final String RADAR         = "icbm/zhapin/jiqi/TLeiDaTai";
+    static final String PACKETS       = "icbm/zhapin/ZhaPinPacketGuanLi";
+    static final String DESIGNATOR    = "icbm/zhapin/dianqi/ItLeiSheZhiBiao";
+    static final String DEFUSER       = "icbm/zhapin/dianqi/ItJieJa";
+    static final String STACK         = "net/minecraft/item/ItemStack";
+    static final String INV_PLAYER    = "net/minecraft/entity/player/InventoryPlayer";
+    static final String[] MULTIBLOCK_OWNERS = { LAUNCH_BASE, LAUNCH_FRAME, EMP_CLASS, RADAR };
 
     static final String WORLD      = "net/minecraft/world/World";
     static final String SPAWN      = "func_72838_d";   // World.spawnEntityInWorld
@@ -66,6 +80,10 @@ public class PatchICBM {
     static final int L_CALLCOUNT = 5;
 
     static boolean doRed, doSonic, doRemote, doType, doEmp, doLauncher;
+    static boolean doMulti, doCruise, doDesignator, doDefuser, doMissile;
+    static boolean hitCruise, hitDesignator, hitDefuser;
+    static final Set<String> multiHits = new HashSet<String>();
+    static final Set<String> missileHits = new HashSet<String>();
     static boolean hitRed, hitInit, hitRemote, hitType, hitEmp;
     static final Set<String> launcherHits = new HashSet<String>();
     static final Set<String> sonicAdds = new HashSet<String>();
@@ -74,7 +92,7 @@ public class PatchICBM {
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
             System.err.println("usage: PatchICBM <in.jar> <out.jar> <patches> <VoltzICBM.class>");
-            System.err.println("patches: redmatter,sonic,remote,explosivetype,empradius,launchertier");
+            System.err.println("patches: redmatter,sonic,remote,explosivetype,empradius,launchertier,multiblock,cruiselauncher,designator,defuser,missilestack");
             System.exit(2);
         }
         for (String p : args[2].split(",")) {
@@ -85,6 +103,11 @@ public class PatchICBM {
             else if (p.equals("explosivetype")) doType = true;
             else if (p.equals("empradius")) doEmp = true;
             else if (p.equals("launchertier")) doLauncher = true;
+            else if (p.equals("multiblock")) doMulti = true;
+            else if (p.equals("cruiselauncher")) doCruise = true;
+            else if (p.equals("designator")) doDesignator = true;
+            else if (p.equals("defuser")) doDefuser = true;
+            else if (p.equals("missilestack")) doMissile = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -104,6 +127,13 @@ public class PatchICBM {
             if (doLauncher && (n.equals(LAUNCH_BASE + ".class") || n.equals(LAUNCH_FRAME + ".class")))
                 d = patchLauncherPart(d, n);
             if (doLauncher && n.equals(LAUNCH_SCREEN + ".class")) d = patchLauncherScreen(d);
+            for (String owner : MULTIBLOCK_OWNERS)
+                if (doMulti && n.equals(owner + ".class")) d = patchMultiblockOwner(d, owner);
+            if (doCruise && n.equals(CRUISE + ".class"))       d = patchCruiseLauncher(d);
+            if (doDesignator && n.equals(PACKETS + ".class"))  d = patchDesignator(d);
+            if (doDefuser && n.equals(DEFUSER + ".class"))     d = patchDefuser(d);
+            if (doMissile && (n.equals(LAUNCH_BASE + ".class") || n.equals(CRUISE + ".class")))
+                d = patchMissileStack(d, n.substring(0, n.length() - ".class".length()));
             if (n.equals(MAIN_CLASS + ".class"))            d = patchInitHook(d);
             out.put(n, d);
         }
@@ -122,6 +152,13 @@ public class PatchICBM {
         if (doEmp && !hitEmp) throw new IllegalStateException("empradius patch did not apply");
         if (doLauncher && launcherHits.size() != 3)
             throw new IllegalStateException("launchertier patch applied to " + launcherHits + ", expected 3 classes");
+        if (doMulti && multiHits.size() != MULTIBLOCK_OWNERS.length * 2)
+            throw new IllegalStateException("multiblock patch applied to " + multiHits + ", expected onActivated and onDestroy in 4 classes");
+        if (doCruise && !hitCruise) throw new IllegalStateException("cruiselauncher patch did not apply");
+        if (doDesignator && !hitDesignator) throw new IllegalStateException("designator patch did not apply");
+        if (doDefuser && !hitDefuser) throw new IllegalStateException("defuser patch did not apply");
+        if (doMissile && missileHits.size() != 2)
+            throw new IllegalStateException("missilestack patch applied to " + missileHits + ", expected 2 classes");
         if (!hitInit) throw new IllegalStateException("config init hook did not apply");
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
@@ -422,6 +459,195 @@ public class PatchICBM {
             m.instructions.insert(store, refuseOnServer(LAUNCH_SCREEN, store.var, 0, "launcher screen description packet"));
             m.maxStack = Math.max(m.maxStack, 3);
             launcherHits.add(LAUNCH_SCREEN);
+        }
+        return write(cn);
+    }
+
+    /**
+     * Multiblock machines are driven through their dummy blocks: a dummy's TileEntityMulti stores
+     * the main block's position and forwards right-clicks (onActivated) and its own removal
+     * (onDestroy) to whatever tile is there. The shared UE class accepts that position from any
+     * client packet, and ships in several jars, Galacticraft's included, so the class that loads is
+     * not ours to patch. The owners are guarded instead:
+     *
+     *     onActivated(player):       if (!VoltzICBM.multiblockReach(this, player)) return false;
+     *     onDestroy(callingBlock):   if (!VoltzICBM.multiblockPart(this, callingBlock)) return;
+     *
+     * so a dummy pointed at someone else's machine can neither use it from afar nor delete it.
+     */
+    static byte[] patchMultiblockOwner(byte[] in, String owner) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            boolean activate = m.name.equals("onActivated") && m.desc.equals("(Lnet/minecraft/entity/player/EntityPlayer;)Z");
+            boolean destroy = m.name.equals("onDestroy") && m.desc.equals("(Lnet/minecraft/tileentity/TileEntity;)V");
+            if (!activate && !destroy) continue;
+            LabelNode carryOn = new LabelNode();
+            InsnList g = new InsnList();
+            g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            g.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, activate ? "multiblockReach" : "multiblockPart",
+                    "(Ljava/lang/Object;Ljava/lang/Object;)Z", false));
+            g.add(new JumpInsnNode(Opcodes.IFNE, carryOn));
+            if (activate) {
+                g.add(new InsnNode(Opcodes.ICONST_0));
+                g.add(new InsnNode(Opcodes.IRETURN));
+            } else {
+                g.add(new InsnNode(Opcodes.RETURN));
+            }
+            g.add(carryOn);
+            m.instructions.insert(g);
+            m.maxStack = Math.max(m.maxStack, 2);
+            multiHits.add(owner + "." + m.name);
+        }
+        return write(cn);
+    }
+
+    /**
+     * TXiaoFaSheQi (cruise launcher). Packet 0 is the server's description packet - joules,
+     * frequency, EMP-disabled ticks and target - and the server applies it from any client: a
+     * full 800,000 J launch charge for free, or an EMP disable cancelled. Ignored on the server;
+     * the GUI's frequency and target packets (1, 2) are untouched.
+     */
+    static byte[] patchCruiseLauncher(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("handlePacketData")) continue;
+            VarInsnNode store = packetIdStore(m);
+            if (store == null) throw new IllegalStateException("cruiselauncher: no packet ID read");
+            m.instructions.insert(store, refuseOnServer(CRUISE, store.var, 0, "cruise launcher description packet"));
+            m.maxStack = Math.max(m.maxStack, 3);
+            hitCruise = true;
+        }
+        return write(cn);
+    }
+
+    /**
+     * ZhaPinPacketGuanLi.handlePacketData, LASER_DESIGNATOR branch. The client only sends the
+     * packet when the held designator has a frequency, more than 6,000 J and no strike counting
+     * down, and the target came from its own ray trace. The server checks only that a designator
+     * is held, then starts a strike and spawns a light-beam entity at the client's coordinates.
+     * Right after the target vector is stored (`astore` of a new Vector3), insert
+     *
+     *     if (!VoltzICBM.designatorAllowed(player, target, designator.getFrequency(stack),
+     *             designator.getLauncherCountDown(stack), designator.getJoules(stack),
+     *             ItLeiSheZhiBiao.BAN_JING)) return;
+     */
+    static byte[] patchDesignator(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("handlePacketData")) continue;
+            int hits = 0;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.ASTORE) continue;
+                AbstractInsnNode prev = i.getPrevious();
+                while (prev != null && prev.getOpcode() < 0) prev = prev.getPrevious();
+                if (!(prev instanceof MethodInsnNode) || !((MethodInsnNode) prev).owner.equals("universalelectricity/core/vector/Vector3")
+                        || !((MethodInsnNode) prev).name.equals("<init>")) continue;
+                int target = ((VarInsnNode) i).var;
+                int stack = target - 1;                       // the held designator, stored just before
+                LabelNode carryOn = new LabelNode();
+                InsnList g = new InsnList();
+                g.add(new VarInsnNode(Opcodes.ALOAD, 4));
+                g.add(new VarInsnNode(Opcodes.ALOAD, target));
+                g.add(new FieldInsnNode(Opcodes.GETSTATIC, MAIN_CLASS, "itLeiSheZhiBiao", "L" + ELECTRIC + ";"));
+                g.add(new TypeInsnNode(Opcodes.CHECKCAST, DESIGNATOR));
+                g.add(new VarInsnNode(Opcodes.ALOAD, stack));
+                g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, DESIGNATOR, "getFrequency", "(L" + STACK + ";)I", false));
+                g.add(new FieldInsnNode(Opcodes.GETSTATIC, MAIN_CLASS, "itLeiSheZhiBiao", "L" + ELECTRIC + ";"));
+                g.add(new TypeInsnNode(Opcodes.CHECKCAST, DESIGNATOR));
+                g.add(new VarInsnNode(Opcodes.ALOAD, stack));
+                g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, DESIGNATOR, "getLauncherCountDown", "(L" + STACK + ";)I", false));
+                g.add(new FieldInsnNode(Opcodes.GETSTATIC, MAIN_CLASS, "itLeiSheZhiBiao", "L" + ELECTRIC + ";"));
+                g.add(new VarInsnNode(Opcodes.ALOAD, stack));
+                g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, ELECTRIC, "getJoules", "(L" + STACK + ";)D", false));
+                g.add(new FieldInsnNode(Opcodes.GETSTATIC, DESIGNATOR, "BAN_JING", "I"));
+                g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "designatorAllowed",
+                        "(Ljava/lang/Object;Ljava/lang/Object;IIDI)Z", false));
+                g.add(new JumpInsnNode(Opcodes.IFNE, carryOn));
+                g.add(new InsnNode(Opcodes.RETURN));
+                g.add(carryOn);
+                m.instructions.insert(i, g);
+                hits++;
+            }
+            if (hits != 1) throw new IllegalStateException("designator: expected 1 target vector, found " + hits);
+            m.maxStack = m.maxStack + 8;
+            hitDesignator = true;
+        }
+        return write(cn);
+    }
+
+    /**
+     * ItJieJa (defuser) onLeftClickEntity drops the explosive and kills the entity, with no check
+     * that it is still alive. A dead entity stays attackable until the world tick removes it, so
+     * two attacks in one tick drop two explosives. Prepend
+     *
+     *     if (entity.isDead) return true;
+     */
+    static byte[] patchDefuser(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("onLeftClickEntity")) continue;
+            LabelNode carryOn = new LabelNode();
+            InsnList g = new InsnList();
+            g.add(new VarInsnNode(Opcodes.ALOAD, 3));
+            g.add(new FieldInsnNode(Opcodes.GETFIELD, "net/minecraft/entity/Entity", "field_70128_L", "Z"));   // isDead
+            g.add(new JumpInsnNode(Opcodes.IFEQ, carryOn));
+            g.add(new InsnNode(Opcodes.ICONST_1));
+            g.add(new InsnNode(Opcodes.IRETURN));
+            g.add(carryOn);
+            m.instructions.insert(g);
+            m.maxStack = Math.max(m.maxStack, 1);
+            hitDefuser = true;
+        }
+        return write(cn);
+    }
+
+    /**
+     * TFaSheDi and TXiaoFaSheQi onActivated load a missile with
+     *
+     *     setInventorySlotContents(0, player.inventory.getCurrentItem());
+     *     player.inventory.setInventorySlotContents(player.inventory.currentItem, null);
+     *
+     * which loads the whole held stack into a one-missile slot and deletes it from the hand. The
+     * first call now gets `getCurrentItem().splitStack(1)`, and the `null` becomes
+     * VoltzICBM.heldRemainder(player): the rest of the stack, or null when nothing is left.
+     */
+    static byte[] patchMissileStack(byte[] in, String owner) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("onActivated") || !m.desc.equals("(Lnet/minecraft/entity/player/EntityPlayer;)Z")) continue;
+            int split = 0, remainder = 0;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.INVOKEVIRTUAL) continue;
+                MethodInsnNode mi = (MethodInsnNode) i;
+                if (!mi.name.equals("func_70299_a")) continue;                                   // setInventorySlotContents
+                AbstractInsnNode prev = mi.getPrevious();
+                while (prev != null && prev.getOpcode() < 0) prev = prev.getPrevious();
+                if (mi.owner.equals(owner) && prev instanceof MethodInsnNode && ((MethodInsnNode) prev).name.equals("func_70448_g")) {
+                    InsnList one = new InsnList();
+                    one.add(new InsnNode(Opcodes.ICONST_1));
+                    one.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, STACK, "func_77979_a", "(I)L" + STACK + ";", false));   // splitStack
+                    m.instructions.insertBefore(mi, one);
+                    split++;
+                } else if (mi.owner.equals(INV_PLAYER) && prev.getOpcode() == Opcodes.ACONST_NULL) {
+                    InsnList rest = new InsnList();
+                    rest.add(new VarInsnNode(Opcodes.ALOAD, 1));
+                    rest.add(new MethodInsnNode(Opcodes.INVOKESTATIC, CFG_CLASS, "heldRemainder", "(Ljava/lang/Object;)Ljava/lang/Object;", false));
+                    rest.add(new TypeInsnNode(Opcodes.CHECKCAST, STACK));
+                    m.instructions.insertBefore(prev, rest);
+                    m.instructions.remove(prev);
+                    remainder++;
+                }
+            }
+            if (split != 1 || remainder != 1)
+                throw new IllegalStateException("missilestack: " + owner + " expected 1 load and 1 clear, found " + split + " and " + remainder);
+            m.maxStack = m.maxStack + 1;
+            missileHits.add(owner);
         }
         return write(cn);
     }

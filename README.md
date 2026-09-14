@@ -13,9 +13,9 @@ Each patch is selectable individually.
 | [MPS Addons 0.2.3](#mps-addons-023) | `magnet` |
 | [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` · `mergedupe` · `stabilizedupe` |
 | [Mekanism 5.5.6](#mekanism-556) | `chestcrash` · `chestdupe` · `chestremote` · `machinedupe` · `robitdupe` · `tntdupe` · `tntsource` · `timeitems` |
-| [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` · `remote` · `explosivetype` · `empradius` · `launchertier` |
-| [ICBM Sentry 1.2.1](#icbm-sentry-121) | `terminal` · `turretpackets` |
-| [ICBM Contraption 1.2.1](#icbm-contraption-121) | `camouflage` |
+| [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` · `remote` · `explosivetype` · `empradius` · `launchertier` · `multiblock` · `cruiselauncher` · `designator` · `defuser` · `missilestack` |
+| [ICBM Sentry 1.2.1](#icbm-sentry-121) | `terminal` · `turretpackets` · `multiblock` · `ammodupe` |
+| [ICBM Contraption 1.2.1](#icbm-contraption-121) | `camouflage` · `detector` |
 | [Modular Powersuits 0.7.0](#modular-powersuits-070) | `blink` |
 | [MineFactoryReloaded 2.6.4](#minefactoryreloaded-264) | `ghostslot` |
 
@@ -687,14 +687,14 @@ MCPC+ the command ran through Bukkit (`* VTest voted for noon via VTest`).
 
 ## ICBM Explosion 1.2.1
 
-Six fixes: explosives that never stop or flood the server with entities, and packet handlers
-that trust the client. The patcher rewrites nine classes in `ICBM_Explosion_v1.2.1.172.jar`
-and adds `VoltzICBM`.
+Eleven fixes: explosives that never stop or flood the server with entities, packet handlers
+that trust the client, and item dupes and losses. The patcher rewrites thirteen classes in
+`ICBM_Explosion_v1.2.1.172.jar` and adds `VoltzICBM`.
 
 Verified with the same harness on the dedicated Forge server. On MCPC+ the explosions never
 ticked in the harness at all — Spigot's entity activation skips entities with no player
-nearby — so they were not exercised there. `remote`, `explosivetype`, `empradius` and
-`launchertier` were tested on Forge only. None of the six has any platform-specific code.
+nearby — so they were not exercised there. Every fix from `remote` on was tested on Forge only.
+None of them has any platform-specific code.
 
 <details>
 <summary><b>1. <code>redmatter</code> — a Red Matter black hole never ends</b></summary>
@@ -846,6 +846,96 @@ packets from its GUI are untouched.
 
 </details>
 
+<details>
+<summary><b>7. <code>multiblock</code> — use or delete someone's machine through a fake dummy block</b></summary>
+
+**The bug.** Multiblock machines (launcher base and frame, EMP tower, radar) are a main block
+plus dummy blocks. Each dummy remembers where its main block is, passes right-clicks to it, and
+deletes the whole machine when it is broken. The dummy's packet sets that position from any
+client. Point a dummy of your own machine at someone else's machine anywhere in the dimension,
+then right-click it to open their GUI, or break it to delete their machine with no drops.
+
+The dummy class is shared Universal Electricity code that ships in six Voltz jars, and
+Galacticraft ships its own copy with the same flaw, so which copy runs depends on load order.
+
+**The patch.** The machines check their dummies instead: a right-click needs the player within
+10 blocks of the machine, and only a dummy within 2 blocks of the machine can remove it. The
+ICBM Sentry railgun gets the same patch.
+
+**Verified** on the Forge test server:
+
+| Dummy pointed at an EMP tower | Stock | Patched |
+|---|---|---|
+| Right-clicked from 100 blocks away | opens its GUI | refused |
+| Broken 100 blocks away | tower deleted | tower kept |
+| The dummy on top of the tower, broken | tower removed | tower removed |
+
+</details>
+
+<details>
+<summary><b>8. <code>cruiselauncher</code> — free cruise launcher charge</b></summary>
+
+**The bug.** Like the launcher screen, the cruise launcher accepts its description packet from
+clients: charge, frequency, EMP-disabled timer and target. A client can fill the 800,000 J launch
+charge for free, or clear an EMP's disable.
+
+**The patch.** The server ignores that packet. The GUI's frequency and target packets work as
+before.
+
+**Verified** on the same server: a description packet setting frequency 55 was applied on stock
+and ignored when patched; the GUI's frequency packet (77) worked on both.
+
+</details>
+
+<details>
+<summary><b>9. <code>designator</code> — airstrikes with no frequency, charge or cooldown</b></summary>
+
+**The bug.** The laser designator's airstrike packet only checks that the sender holds a
+designator. Its real rules live in the client: a frequency, more than 6,000 J, no strike already
+counting down, and a target in range. A client can start strikes with an empty designator and
+repeat them endlessly, each one spawning a light-beam entity.
+
+**The patch.** The server checks those rules before starting the strike.
+
+**Verified** on the same server:
+
+| Designator strike | Stock | Patched |
+|---|---|---|
+| No frequency | started | refused |
+| Frequency and charge, target 10 blocks away | started | started |
+| Again while the first counts down | started | refused |
+| No charge | started | refused |
+
+</details>
+
+<details>
+<summary><b>10. <code>defuser</code> — defuse the same explosive twice</b></summary>
+
+**The bug.** The defuser drops the explosive (or TNT) and kills the entity, but never checks that
+the entity is still alive. A dead entity can still be hit until the tick ends, so two hits in one
+tick drop two.
+
+**The patch.** Hitting an entity that is already dead does nothing.
+
+**Verified** on the same server: defusing the same primed TNT twice in one tick dropped 2 TNT on
+stock and 1 when patched.
+
+</details>
+
+<details>
+<summary><b>11. <code>missilestack</code> — loading a launcher deletes the rest of the stack</b></summary>
+
+**The bug.** Right-clicking the launcher base or cruise launcher with missiles moves the whole
+held stack into its one-missile slot and empties the player's hand. A stack of 16 missiles
+becomes 1.
+
+**The patch.** One missile is loaded and the rest stay in the hand.
+
+**Verified** on the same server: loading either launcher from a stack of 16 left 0 in hand on
+stock and 15 when patched.
+
+</details>
+
 `config/VoltzFixes-ICBM.cfg` covers `redmatter` and `sonic`. `0` restores the stock behaviour for either:
 
 ```
@@ -859,8 +949,9 @@ general {
 
 ## ICBM Sentry 1.2.1
 
-Two fixes for turret platforms and turrets that obey any client. The patcher rewrites two
-classes in `ICBM_Sentry_v1.2.1.172.jar` and adds `VoltzSentry`. Tested on Forge only.
+Four fixes for turret platforms and turrets that obey any client, and an ammo dupe. The patcher
+rewrites six classes in `ICBM_Sentry_v1.2.1.172.jar` and adds `VoltzSentry`. Tested on Forge
+only.
 
 <details>
 <summary><b>1. <code>terminal</code> — run platform commands as the owner, from anywhere</b></summary>
@@ -909,13 +1000,53 @@ and was ignored when patched.
 
 </details>
 
-## ICBM Contraption 1.2.1
+<details>
+<summary><b>3. <code>multiblock</code> — mount, fire or delete someone's railgun from afar</b></summary>
 
-One fix, for the camouflage block. The patcher rewrites one class in
-`ICBM_Contraption_v1.2.1.172.jar` and adds `VoltzContraption`. Tested on Forge only.
+**The bug.** The railgun is a multiblock with the same dummy-block flaw as ICBM Explosion's
+machines (see `multiblock` there). A dummy pointed at someone's railgun lets a player mount it
+(a free trip into their base), fire it with their ammo, or delete it by breaking the dummy.
+
+**The patch.** Mounting or firing needs the player within 10 blocks, and only a dummy within 2
+blocks of the railgun can remove it.
+
+**Verified** on the Forge test server:
+
+| Dummy 100 blocks away, pointed at a railgun | Stock | Patched |
+|---|---|---|
+| Right-clicked | mounts the railgun | refused |
+| Broken | railgun deleted | railgun kept |
+
+</details>
 
 <details>
-<summary><b><code>camouflage</code> — crash every nearby player with one packet</b></summary>
+<summary><b>4. <code>ammodupe</code> — take a broken platform's ammo twice</b></summary>
+
+**The bug.** A turret platform's GUI never closes (`isUseableByPlayer` is always `true`), and
+breaking a platform drops copies of its ammunition while leaving the originals in the slots. Keep
+the GUI open while the platform is broken - by another player, a block breaker, or `destroy` -
+and the ammo lands on the ground and can still be taken out of the GUI.
+
+**The patch.** The GUI closes once the platform is gone or the player is more than 8 blocks away,
+and each slot is emptied as its contents drop.
+
+**Verified** on the same server, with 64 rounds in the platform:
+
+| Turret platform | Stock | Patched |
+|---|---|---|
+| GUI from 100 blocks away | usable | closed |
+| Rounds left in the slot after breaking it | 64 | 0 |
+| GUI after breaking it | usable | closed |
+
+</details>
+
+## ICBM Contraption 1.2.1
+
+Two fixes, for the camouflage block and the proximity detector. The patcher rewrites two classes
+in `ICBM_Contraption_v1.2.1.172.jar` and adds `VoltzContraption`. Tested on Forge only.
+
+<details>
+<summary><b>1. <code>camouflage</code> — crash every nearby player with one packet</b></summary>
 
 **The bug.** The camouflage block's packet sets the block it disguises as, which sides are
 see-through and whether it is solid. Only the server should send it, but the server applies it
@@ -933,6 +1064,27 @@ when the block loads, so blocks poisoned before the patch stop crashing clients.
 |---|---|---|
 | Packet setting block id 5000 | saved 5000 | ignored |
 | Loaded from NBT with block id 5000 | 5000 | 0 |
+
+</details>
+
+<details>
+<summary><b>2. <code>detector</code> — power, retune or switch off any proximity detector</b></summary>
+
+**The bug.** The proximity detector accepts its description packet from clients (power,
+frequency, mode, inversion and range), and its GUI packets from any distance. A client can run
+someone's detector with no power, invert it, shrink its range or change its frequency, quietly
+disabling whatever defences it triggers.
+
+**The patch.** The server ignores the description packet, and GUI packets need the player within
+8 blocks. Closing the GUI is always accepted.
+
+**Verified** on the Forge test server:
+
+| Proximity detector packet | Stock | Patched |
+|---|---|---|
+| Mode, from 100 blocks away | applied | refused |
+| Mode, from 3 blocks away (GUI) | applied | applied |
+| Description packet setting frequency 99 | applied | ignored |
 
 </details>
 
@@ -1133,19 +1285,28 @@ ICBM_Explosion_v1.2.1.172-patched.jar
           icbm/zhapin/zhapin/ex/ExShengBuo.class      queue dedupe, flying block cap
           icbm/zhapin/zhapin/ex/ExChaoShengBuo.class  queue dedupe, flying block cap
           icbm/zhapin/zhapin/TZhaDan.class            remote and set-type packet checks
-          icbm/zhapin/jiqi/TDianCiQi.class            EMP tower packet, radius clamp
-          icbm/zhapin/jiqi/TFaSheDi.class             launcher tier packet
-          icbm/zhapin/jiqi/TFaSheJia.class            launcher tier packet
+          icbm/zhapin/jiqi/TDianCiQi.class            EMP tower packet, radius clamp, dummy checks
+          icbm/zhapin/jiqi/TFaSheDi.class             tier packet, dummy checks, missile loading
+          icbm/zhapin/jiqi/TFaSheJia.class            tier packet, dummy checks
           icbm/zhapin/jiqi/TFaSheShiMuo.class         launcher screen description packet
+          icbm/zhapin/jiqi/TLeiDaTai.class            dummy checks
+          icbm/zhapin/jiqi/TXiaoFaSheQi.class         description packet, missile loading
+          icbm/zhapin/ZhaPinPacketGuanLi.class        laser designator checks
+          icbm/zhapin/dianqi/ItJieJa.class            dead entity check
 
 ICBM_Sentry_v1.2.1.172-patched.jar
   added   icbm/gangshao/VoltzSentry.class
   changed icbm/gangshao/terminal/TileEntityTerminal.class  command sender and reach
           icbm/gangshao/turret/TPaoDaiBase.class           turret packets ignored on the server
+          icbm/gangshao/turret/mount/TPaoTaiQi.class       mount reach
+          icbm/gangshao/turret/mount/TCiGuiPao.class       dummy block check
+          icbm/gangshao/platform/TPaoTaiZhan.class         GUI reach
+          icbm/gangshao/platform/BlockTurretPlatform.class slots emptied as they drop
 
 ICBM_Contraption_v1.2.1.172-patched.jar
   added   icbm/wanyi/VoltzContraption.class
   changed icbm/wanyi/b/TYinXing.class                     packet ignored on the server, id clamp
+          icbm/wanyi/b/TYinGanQi.class                    detector packet checks
           icbm/zhapin/ZhuYaoZhaPin.class              config init hook
 
 ModularPowersuits-0.7.0-534-patched.jar

@@ -108,7 +108,7 @@ patch_one "Mekanism"       "$MEK_SRC"  "Mekanism-v5.5.6.bugfix1-patched.jar" \
 
 patch_one "ICBM Explosion" "$ICBM_SRC" "ICBM_Explosion_v1.2.1.172-patched.jar" \
           PatchICBM.java build/cls/icbm/zhapin/VoltzICBM.class \
-          "redmatter,sonic,remote,explosivetype,empradius,launchertier"
+          "redmatter,sonic,remote,explosivetype,empradius,launchertier,multiblock,cruiselauncher,designator,defuser,missilestack"
 
 patch_one "Modular Powersuits" "$MPS_SRC" "ModularPowersuits-0.7.0-534-patched.jar" \
           PatchMPS.java  build/cls/net/machinemuse/powersuits/VoltzMPS.class \
@@ -116,11 +116,11 @@ patch_one "Modular Powersuits" "$MPS_SRC" "ModularPowersuits-0.7.0-534-patched.j
 
 patch_one "ICBM Sentry"    "$ICBMS_SRC" "ICBM_Sentry_v1.2.1.172-patched.jar" \
           PatchICBMSentry.java build/cls/icbm/gangshao/VoltzSentry.class \
-          "terminal,turretpackets"
+          "terminal,turretpackets,multiblock,ammodupe"
 
 patch_one "ICBM Contraption" "$ICBMC_SRC" "ICBM_Contraption_v1.2.1.172-patched.jar" \
           PatchICBMContraption.java build/cls/icbm/wanyi/VoltzContraption.class \
-          "camouflage"
+          "camouflage,detector"
 
 patch_one "MineFactoryReloaded" "$MFR_SRC" "MineFactoryReloaded-2.6.4-975-patched.jar" \
           PatchMFR.java  build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class \
