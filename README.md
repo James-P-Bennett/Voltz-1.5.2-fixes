@@ -1,17 +1,11 @@
 # Voltz 1.5.2 fixes
 
 Bug fixes for mods in the **Voltz** modpack (Minecraft 1.5.2), applied as bytecode
-patches to the shipped jars. No mod source is used or required.
-
-Every claim in this document was verified by disassembling the jars and by server-side
-telemetry captured on a 1.5.2 Forge test server — not from memory, wikis, or guesswork.
+patches to the shipped jars.
 
 **These are server-side patches and they work against an unmodified Voltz client.**
-Install them on the server only. Players connect with the stock modpack, install nothing,
-and change nothing — every fix runs in server-side code.
 
-Each patch is selectable individually, and the patcher fails the build if a selected
-patch does not apply, so it can never write a jar that silently did nothing.
+Each patch is selectable individually.
 
 | Mod | Patches |
 |---|---|
