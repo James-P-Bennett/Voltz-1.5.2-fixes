@@ -11,7 +11,7 @@ Each patch is selectable individually.
 |---|---|
 | [Atomic Science v0.6.2.117](#atomic-science-v062117) | `assemblerwear` · `syncspawn` · `plasma` · `noblastdamage` |
 | [MPS Addons 0.2.3](#mps-addons-023) | `magnet` |
-| [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` · `mergedupe` |
+| [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` · `mergedupe` · `stabilizedupe` |
 | [Mekanism 5.5.6](#mekanism-556) | `chestcrash` · `chestdupe` · `chestremote` · `machinedupe` · `robitdupe` · `tntdupe` · `tntsource` · `timeitems` |
 | [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` |
 | [Modular Powersuits 0.7.0](#modular-powersuits-070) | `blink` |
@@ -417,6 +417,48 @@ and pipes.
 | None | 64 | 64 |
 
 In game on stock, one stack filled a 31-slot inventory within a minute.
+
+</details>
+
+<details>
+<summary><b><code>stabilizedupe</code> — the Stabilize module builds free blocks out of filter slots</b></summary>
+
+**The bug.** A projector with the Stabilize module builds its field from block items in the
+inventories touching it. It reads **every slot** of those inventories:
+
+```java
+for (int slot = 0; slot < inventory.getSizeInventory(); slot++) {
+    ItemStack stack = inventory.getStackInSlot(slot);
+    if (stack != null && stack.getItem() instanceof ItemBlock) {
+        placeBlock(stack); inventory.decrStackSize(slot, 1);
+```
+
+Machines mark slots that must not be pulled from through `ISidedInventory`, which hoppers,
+Applied Energistics buses and MFR's own Ejector all respect. Stabilize ignores it. The worst
+case is MFR's filter ("ghost") slots, which hold a free size-1 copy of whatever the player
+clicks with. Put a diamond block in an Item Router filter, set a Stabilize projector next to
+it, and every 2 seconds the copy becomes a real placed block. Click the filter again and it
+refills for free. Any block item in any MFR filter slot works.
+
+**The patch.** For a sided inventory, Stabilize now takes from a slot only if the face touching
+the projector exposes it and `canExtractItem` allows it, the same rule a hopper uses. Plain
+inventories such as chests are unaffected.
+
+None of the seven MFR machines with filter slots exposes them for extraction, so none can feed
+Stabilize from a filter any more.
+
+**Checked** by running the real `ItemModuleStablize` bytecode, stock and patched, against mock
+Minecraft classes. The inventory sits east of the projector, so its touching face is west:
+
+| Inventory next to the projector | Stock takes | Patched takes |
+|---|---|---|
+| Chest, block in slot 0 | slot 0 | slot 0 |
+| Filter slot only | filter slot | nothing |
+| Filter slot + real slot exposed on the touching face | filter slot | real slot |
+| Real slot exposed on another face only | real slot | nothing |
+| Filter slot exposed, but `canExtractItem` refuses it | filter slot | nothing |
+
+Not yet exercised on a live server.
 
 </details>
 

@@ -119,6 +119,20 @@ public class BalancedMFFS {
         }
     }
 
+    // -------------------------------------------------------------- stabilize
+
+    /**
+     * Called from ItemModuleStablize for each slot of a sided inventory next to the
+     * projector: is the slot among those exposed on the face touching the projector?
+     */
+    public static boolean hasSlot(int[] slots, int slot) {
+        if (slots == null) return false;
+        for (int i = 0; i < slots.length; i++) {
+            if (slots[i] == slot) return true;
+        }
+        return false;
+    }
+
     // ------------------------------------------------------------- reflection
 
     private static Field field(Class c, String name) {
