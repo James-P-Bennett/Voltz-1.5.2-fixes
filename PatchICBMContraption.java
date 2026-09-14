@@ -9,6 +9,7 @@ import java.util.zip.*;
  *
  *   camouflage   TYinXing.handlePacketData   ignored on the server
  *                TYinXing.readFromNBT        jiaHaoMa -> VoltzContraption.blockId(jiaHaoMa)
+ *   detector     TYinGanQi.handlePacketData  packet refused unless VoltzContraption.detectorPacketAllowed
  *
  * The camouflage block's packet is the server's description packet - disguise block id and
  * metadata, see-through sides, solid - but the server applies it from any client. An id past
@@ -22,20 +23,22 @@ public class PatchICBMContraption {
 
     static final String CAMO   = "icbm/wanyi/b/TYinXing";
     static final String HELPER = "icbm/wanyi/VoltzContraption";
+    static final String DETECTOR = "icbm/wanyi/b/TYinGanQi";
     static final String WORLD  = "net/minecraft/world/World";
 
-    static boolean doCamo;
-    static boolean hitGuard, hitClamp;
+    static boolean doCamo, doDetector;
+    static boolean hitGuard, hitClamp, hitDetector;
 
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
             System.err.println("usage: PatchICBMContraption <in.jar> <out.jar> <patches> <VoltzContraption.class>");
-            System.err.println("patches: camouflage");
+            System.err.println("patches: camouflage,detector");
             System.exit(2);
         }
         for (String p : args[2].split(",")) {
             p = p.trim();
             if (p.equals("camouflage")) doCamo = true;
+            else if (p.equals("detector")) doDetector = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -47,12 +50,14 @@ public class PatchICBMContraption {
             byte[] d = readAll(zf.getInputStream(ze));
             String n = ze.getName();
             if (doCamo && n.equals(CAMO + ".class")) d = patchCamouflage(d);
+            if (doDetector && n.equals(DETECTOR + ".class")) d = patchDetector(d);
             out.put(n, d);
         }
         zf.close();
         out.put(HELPER + ".class", readAll(new FileInputStream(args[3])));
 
         if (doCamo && !(hitGuard && hitClamp)) throw new IllegalStateException("camouflage patch did not apply");
+        if (doDetector && !hitDetector) throw new IllegalStateException("detector patch did not apply");
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
         for (Map.Entry<String, byte[]> en : out.entrySet()) {
@@ -105,6 +110,45 @@ public class PatchICBMContraption {
                 if (hits != 1) throw new IllegalStateException("camouflage: expected 1 id load in readFromNBT, found " + hits);
                 hitClamp = true;
             }
+        }
+        return write(cn);
+    }
+
+    /**
+     * TYinGanQi (proximity detector). Packet 1 is the server's description packet - power,
+     * frequency, mode, inversion and range - and the GUI's own packets (-1 open/close, 2 mode,
+     * 3 frequency, 4 and 5 range) carry no reach check, so any client can power, retune or
+     * invert any detector from anywhere. Right after the packet ID is read, insert
+     *
+     *     if (!VoltzContraption.detectorPacketAllowed(this, player, id)) return;
+     */
+    static byte[] patchDetector(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("handlePacketData")) continue;
+            AbstractInsnNode store = null;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.INVOKEINTERFACE || !((MethodInsnNode) i).name.equals("readInt")) continue;
+                store = i.getNext();
+                while (store != null && store.getOpcode() < 0) store = store.getNext();
+                break;
+            }
+            if (store == null || store.getOpcode() != Opcodes.ISTORE)
+                throw new IllegalStateException("detector: no packet ID read in TYinGanQi.handlePacketData");
+            LabelNode carryOn = new LabelNode();
+            InsnList g = new InsnList();
+            g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            g.add(new VarInsnNode(Opcodes.ALOAD, 4));
+            g.add(new VarInsnNode(Opcodes.ILOAD, ((VarInsnNode) store).var));
+            g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, HELPER, "detectorPacketAllowed",
+                    "(Ljava/lang/Object;Ljava/lang/Object;I)Z", false));
+            g.add(new JumpInsnNode(Opcodes.IFNE, carryOn));
+            g.add(new InsnNode(Opcodes.RETURN));
+            g.add(carryOn);
+            m.instructions.insert(store, g);
+            m.maxStack = Math.max(m.maxStack, 3);
+            hitDetector = true;
         }
         return write(cn);
     }

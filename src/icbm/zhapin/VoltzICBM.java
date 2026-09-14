@@ -242,6 +242,122 @@ public class VoltzICBM {
         refused(player, what + " at " + where + " (only the server sends that packet)");
     }
 
+    // ----------------------------------------------------------- multiblocks
+
+    /** 10 blocks: a player clicking a dummy block, plus the size of the machine */
+    private static final double MULTIBLOCK_REACH_SQ = 100.0d;
+
+    /** Prepended to a multiblock owner's onActivated(player): false returns false unused. */
+    public static boolean multiblockReach(Object tile, Object player) {
+        try {
+            double d = distanceSq(player, tile);
+            if (d <= MULTIBLOCK_REACH_SQ) {
+                return true;
+            }
+            refused(player, "use of the machine at " + where(tile) + " through a dummy block " + Math.round(Math.sqrt(d)) + " blocks away");
+        } catch (Throwable t) {
+            System.out.println(TAG + "multiblock reach check failed, refused: " + t);
+        }
+        return false;
+    }
+
+    /**
+     * Prepended to a multiblock owner's onDestroy(callingBlock). A real dummy block is part of
+     * the machine, within 2 blocks of its main block; anything further was pointed at it by a
+     * packet, and breaking it must not delete the machine.
+     */
+    public static boolean multiblockPart(Object tile, Object callingBlock) {
+        if (callingBlock == null || callingBlock == tile) {
+            return true;
+        }
+        try {
+            int dx = Math.abs(coord(callingBlock, "field_70329_l") - coord(tile, "field_70329_l"));
+            int dy = Math.abs(coord(callingBlock, "field_70330_m") - coord(tile, "field_70330_m"));
+            int dz = Math.abs(coord(callingBlock, "field_70327_n") - coord(tile, "field_70327_n"));
+            if (dx <= 2 && dy <= 2 && dz <= 2) {
+                return true;
+            }
+            refused(null, "removal of the machine at " + where(tile) + " by an unrelated block at " + where(callingBlock));
+        } catch (Throwable t) {
+            System.out.println(TAG + "multiblock part check failed, refused: " + t);
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------- laser designator
+
+    /**
+     * Inserted into ZhaPinPacketGuanLi's LASER_DESIGNATOR branch before the strike starts. These
+     * are the designator's own rules, which stock checks on the client only: a frequency, no
+     * strike already counting down, more than 6,000 J, and a target inside its ray-trace range
+     * (BAN_JING * 2).
+     */
+    public static boolean designatorAllowed(Object player, Object target, int frequency, int countdown, double joules, int range) {
+        try {
+            String what;
+            if (frequency <= 0) {
+                what = "no frequency set";
+            } else if (countdown > 0) {
+                what = "a strike is already counting down";
+            } else if (joules <= 6000.0d) {
+                what = "no charge";
+            } else {
+                double tx = target.getClass().getField("x").getDouble(target);
+                double ty = target.getClass().getField("y").getDouble(target);
+                double tz = target.getClass().getField("z").getDouble(target);
+                double d = ((Double) findMethod(player.getClass(), "func_70092_e", 3).invoke(player,
+                        new Object[] { Double.valueOf(tx), Double.valueOf(ty), Double.valueOf(tz) })).doubleValue();
+                double max = range * 2.0d + 2.0d;
+                if (d <= max * max) {
+                    return true;
+                }
+                what = "target " + Math.round(Math.sqrt(d)) + " blocks away";
+            }
+            refused(player, "laser designator strike (" + what + ")");
+        } catch (Throwable t) {
+            System.out.println(TAG + "laser designator check failed, refused: " + t);
+        }
+        return false;
+    }
+
+    // ---------------------------------------------------------- missile stack
+
+    /**
+     * Replaces the `null` a launcher's onActivated writes into the player's held slot after
+     * loading one missile: the rest of the held stack, or null once it is empty.
+     */
+    public static Object heldRemainder(Object player) {
+        try {
+            Object inventory = field(player, "field_71071_by");                                  // EntityPlayer.inventory
+            Object held = findMethod(inventory.getClass(), "func_70448_g", 0).invoke(inventory, new Object[0]);   // getCurrentItem
+            if (held != null && ((Integer) field(held, "field_77994_a")).intValue() > 0) {        // ItemStack.stackSize
+                return held;
+            }
+        } catch (Throwable t) {
+            System.out.println(TAG + "could not keep the rest of a missile stack: " + t);
+        }
+        return null;
+    }
+
+    private static int coord(Object tile, String name) throws Exception {
+        return ((Integer) field(tile, name)).intValue();
+    }
+
+    private static String where(Object tile) {
+        try {
+            return field(tile, "field_70329_l") + "," + field(tile, "field_70330_m") + "," + field(tile, "field_70327_n");
+        } catch (Throwable t) {
+            return "?";
+        }
+    }
+
+    private static double distanceSq(Object player, Object tile) throws Exception {
+        return ((Double) findMethod(player.getClass(), "func_70092_e", 3).invoke(player, new Object[] {
+                Double.valueOf(coord(tile, "field_70329_l") + 0.5d),
+                Double.valueOf(coord(tile, "field_70330_m") + 0.5d),
+                Double.valueOf(coord(tile, "field_70327_n") + 0.5d) })).doubleValue();
+    }
+
     private static Object field(Object o, String name) throws Exception {
         for (Class k = o.getClass(); k != null; k = k.getSuperclass()) {
             try {
@@ -257,7 +373,7 @@ public class VoltzICBM {
     private static void refused(Object player, String what) {
         String name;
         try {
-            name = String.valueOf(field(player, "field_71092_bJ"));           // EntityPlayer.username
+            name = player == null ? "a dummy block" : String.valueOf(field(player, "field_71092_bJ"));   // EntityPlayer.username
         } catch (Throwable t) {
             name = "?";
         }
