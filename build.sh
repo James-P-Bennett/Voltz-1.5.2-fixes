@@ -23,6 +23,7 @@ ICBMS_SRC="${ICBMS_SRC:-$MODS/ICBM_Sentry_v1.2.1.172.jar}"
 ICBMC_SRC="${ICBMC_SRC:-$MODS/ICBM_Contraption_v1.2.1.172.jar}"
 MPS_SRC="${MPS_SRC:-$MODS/ModularPowersuits-0.7.0-534.jar}"
 MFR_SRC="${MFR_SRC:-$MODS/MineFactoryReloaded-2.6.4-975.jar}"
+GC_SRC="${GC_SRC:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/coremods/Galacticraft-1.5.2-a0.1.36.410.jar}"
 
 ASM="${ASM:-$HOME/.local/share/PolyMC/libraries/org/ow2/asm/asm-all/5.0.3/asm-all-5.0.3.jar}"
 JAVAC8="${JAVAC8:-/usr/lib/jvm/java-8-openjdk/bin/javac}"
@@ -78,8 +79,10 @@ compile8 src/icbm/gangshao/VoltzSentry.java
 compile8 src/icbm/wanyi/VoltzContraption.java
 compile8 src/net/machinemuse/powersuits/VoltzMPS.java
 compile8 src/powercrystals/minefactoryreloaded/VoltzMFR.java
+compile8 src/micdoodle8/mods/galacticraft/core/VoltzGC.java
 
 for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
+         build/cls/micdoodle8/mods/galacticraft/core/VoltzGC.class \
          build/cls/andrew/powersuits/VoltzMagnetConfig.class \
          build/cls/mffs/BalancedMFFS.class \
          build/cls/mekanism/common/VoltzMekanism.class \
@@ -104,7 +107,7 @@ patch_one "MFFS"           "$MFFS_SRC" "MFFS_v3.1.0.175-patched.jar" \
 
 patch_one "Mekanism"       "$MEK_SRC"  "Mekanism-v5.5.6.bugfix1-patched.jar" \
           PatchMek.java  "build/cls/mekanism/common/VoltzMekanism.class build/cls/mekanism/common/BalancedTimeItems.class" \
-          "chestcrash,chestdupe,chestremote,machinedupe,robitdupe,tntdupe,tntsource,timeitems"
+          "chestcrash,chestdupe,chestremote,machinedupe,robitdupe,tntdupe,tntsource,timeitems,aebridge,cablereload"
 
 patch_one "ICBM Explosion" "$ICBM_SRC" "ICBM_Explosion_v1.2.1.172-patched.jar" \
           PatchICBM.java build/cls/icbm/zhapin/VoltzICBM.class \
@@ -125,6 +128,10 @@ patch_one "ICBM Contraption" "$ICBMC_SRC" "ICBM_Contraption_v1.2.1.172-patched.j
 patch_one "MineFactoryReloaded" "$MFR_SRC" "MineFactoryReloaded-2.6.4-975-patched.jar" \
           PatchMFR.java  build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class \
           "ghostslot"
+
+patch_one "Galacticraft" "$GC_SRC" "Galacticraft-1.5.2-a0.1.36.410-patched.jar" \
+          PatchGC.java   build/cls/micdoodle8/mods/galacticraft/core/VoltzGC.class \
+          "dimauth,station,reach,rider,guis,nbtclamp,uechunk"
 
 # VoltzLoginGuard: a coremod (not a mod patch) - the FML login-sequence crash guard. Compiled
 # against ASM (using only the 4-arg MethodInsnNode, which FML 1.5.2's ASM 4.1 also has) and the
