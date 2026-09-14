@@ -1346,6 +1346,45 @@ exercised on a live server.
 
 </details>
 
+## FML login-sequence crash (server core, not a mod)
+
+<details>
+<summary><b><code>loginguard</code> — a client crashes the server during login</b></summary>
+
+**The bug.** During the FML login handshake the server routes a client packet-250 custom
+payload through `NetworkRegistry.handleCustomPacket`. For a mod channel (not `FML`/`MC|`, not
+`REGISTER`/`UNREGISTER`) it dispatches to the owning mod's packet handler with
+`handler.getPlayer()` — which is null during login, because no player entity exists yet. A
+modified client that sends such a packet before it has logged in crashes the server thread.
+
+This is not a mod bug — it lives in the Forge/FML core, so it is not one of the mod-jar patches
+above and is not built by `./build.sh`.
+
+**On MCPC+ (the usual Voltz server): already fixed by a plugin.** The `LoginSeqFix` +
+`ProtocolLib` plugins that ship in the preconfigured Voltz server's `plugins/` folder drop
+out-of-order login-phase custom payloads. That is the right layer for MCPC+; keep them enabled.
+MCPC+ also defaults `load-chunk-on-request: false` in `mcpc.yml`, a second reason the ICBM
+`chunkload` guard is belt-and-suspenders there.
+
+**On a plain-Forge server (no plugin layer): `PatchForgeLogin`.** It adds one guard to
+`NetworkRegistry.handleCustomPacket` — the mod-packet branch returns instead of dispatching when
+`getPlayer()` is null — leaving the `REGISTER`/`UNREGISTER` login registration untouched. Run it
+against your own Forge universal zip and install the result as the server's Forge:
+
+```sh
+javac -cp "$ASM" -d build/tool PatchForgeLogin.java
+java -cp "$ASM:build/tool" PatchForgeLogin forge-1.5.2-universal.zip forge-1.5.2-universal-loginguard.zip
+```
+
+**UNTESTED.** This is the one patch here that could not be exercised: reproducing it needs a
+modified client sending an out-of-order login packet, which the server-side harness (it injects
+an already-logged-in fake player) cannot do. The guard is copied from the exact `getPlayer()`
+call in the same method and the patched class passes an ASM verifier, but it has not run on a
+live server. It is plain-Forge only — a Forge server runs obfuscated, matching the packed
+names; MCPC+ runs deobfuscated and uses the plugin instead.
+
+</details>
+
 ## Build
 
 <details>
