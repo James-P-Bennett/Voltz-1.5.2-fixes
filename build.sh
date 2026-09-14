@@ -5,7 +5,7 @@
 #   ./build.sh <AS.jar>        override just the Atomic Science source jar
 #
 # Override any path with an env var:
-#   MODS  AS_SRC  MPSA_SRC  MFFS_SRC  FORGE  ASM  JAVAC8
+#   MODS  AS_SRC  MPSA_SRC  MFFS_SRC  MEK_SRC  ICBM_SRC  MPS_SRC  FORGE  ASM  JAVAC8
 #
 # Helper classes are compiled against the Forge universal zip, NOT against the launcher's
 # bin/minecraft.jar - PolyMC rewrites that file on every launch, so a build depending on it
@@ -17,6 +17,9 @@ MODS="${MODS:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/mods}"
 AS_SRC="${1:-${AS_SRC:-$MODS/Atomic_Science_v0.6.2.117.jar}}"
 MPSA_SRC="${MPSA_SRC:-$MODS/MPSA-0.2.3-144_MPS-531+.jar}"
 MFFS_SRC="${MFFS_SRC:-$MODS/MFFS_v3.1.0.175.jar}"
+MEK_SRC="${MEK_SRC:-$MODS/Mekanism-v5.5.6.bugfix1.jar}"
+ICBM_SRC="${ICBM_SRC:-$MODS/ICBM_Explosion_v1.2.1.172.jar}"
+MPS_SRC="${MPS_SRC:-$MODS/ModularPowersuits-0.7.0-534.jar}"
 
 ASM="${ASM:-$HOME/.local/share/PolyMC/libraries/org/ow2/asm/asm-all/5.0.3/asm-all-5.0.3.jar}"
 JAVAC8="${JAVAC8:-/usr/lib/jvm/java-8-openjdk/bin/javac}"
@@ -45,7 +48,8 @@ compile8() {
     | grep -vE 'bootstrap class path|source value 1\.6|target value 1\.6|options|deprecat' || true
 }
 
-# <label> <src jar> <out jar> <patcher.java> <helper class> [patch list]
+# <label> <src jar> <out jar> <patcher.java> <helper class(es)> [patch list]
+# Several helper classes are passed as one space-separated argument.
 patch_one() {
   local label="$1" src="$2" out="$3" tool="$4" helper="$5" patches="${6:-}"
   if [ ! -f "$src" ]; then
@@ -55,19 +59,27 @@ patch_one() {
   javac -nowarn -cp "$ASM" -d build/tool "$tool"
   local cls="${tool%.java}"
   if [ -n "$patches" ]; then
-    java -cp "$ASM:build/tool" "$cls" "$src" "$out" "$patches" "$helper"
+    java -cp "$ASM:build/tool" "$cls" "$src" "$out" "$patches" $helper
   else
-    java -cp "$ASM:build/tool" "$cls" "$src" "$out" "$helper"
+    java -cp "$ASM:build/tool" "$cls" "$src" "$out" $helper
   fi
 }
 
 compile8 src/atomicscience/fanwusu/VoltzFixConfig.java
 compile8 src/andrew/powersuits/VoltzMagnetConfig.java
 compile8 src/mffs/BalancedMFFS.java
+compile8 src/mekanism/common/VoltzMekanism.java
+compile8 src/mekanism/common/BalancedTimeItems.java
+compile8 src/icbm/zhapin/VoltzICBM.java
+compile8 src/net/machinemuse/powersuits/VoltzMPS.java
 
 for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
          build/cls/andrew/powersuits/VoltzMagnetConfig.class \
-         build/cls/mffs/BalancedMFFS.class; do
+         build/cls/mffs/BalancedMFFS.class \
+         build/cls/mekanism/common/VoltzMekanism.class \
+         build/cls/mekanism/common/BalancedTimeItems.class \
+         build/cls/icbm/zhapin/VoltzICBM.class \
+         build/cls/net/machinemuse/powersuits/VoltzMPS.class; do
   [ -f "$f" ] || { echo "helper class missing after compile: $f" >&2; exit 1; }
 done
 
@@ -80,3 +92,15 @@ patch_one "MPS Addons"     "$MPSA_SRC" "MPSA-0.2.3-144_MPS-531+-patched.jar" \
 
 patch_one "MFFS"           "$MFFS_SRC" "MFFS_v3.1.0.175-patched.jar" \
           PatchMFFS.java build/cls/mffs/BalancedMFFS.class
+
+patch_one "Mekanism"       "$MEK_SRC"  "Mekanism-v5.5.6.bugfix1-patched.jar" \
+          PatchMek.java  "build/cls/mekanism/common/VoltzMekanism.class build/cls/mekanism/common/BalancedTimeItems.class" \
+          "chestcrash,chestdupe,chestremote,machinedupe,robitdupe,tntdupe,tntsource,timeitems"
+
+patch_one "ICBM Explosion" "$ICBM_SRC" "ICBM_Explosion_v1.2.1.172-patched.jar" \
+          PatchICBM.java build/cls/icbm/zhapin/VoltzICBM.class \
+          "redmatter,sonic"
+
+patch_one "Modular Powersuits" "$MPS_SRC" "ModularPowersuits-0.7.0-534-patched.jar" \
+          PatchMPS.java  build/cls/net/machinemuse/powersuits/VoltzMPS.class \
+          "blink"

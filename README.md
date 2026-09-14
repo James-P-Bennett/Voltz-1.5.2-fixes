@@ -12,6 +12,9 @@ Each patch is selectable individually.
 | [Atomic Science v0.6.2.117](#atomic-science-v062117) | `assemblerwear` · `syncspawn` · `plasma` · `noblastdamage` |
 | [MPS Addons 0.2.3](#mps-addons-023) | `magnet` |
 | [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` |
+| [Mekanism 5.5.6](#mekanism-556) | `chestcrash` · `chestdupe` · `chestremote` · `machinedupe` · `robitdupe` · `tntdupe` · `tntsource` · `timeitems` |
+| [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` |
+| [Modular Powersuits 0.7.0](#modular-powersuits-070) | `blink` |
 
 ---
 
@@ -379,6 +382,323 @@ Kept quiet deliberately:
 
 </details>
 
+---
+
+## Mekanism 5.5.6
+
+Eight fixes for crashes, dupes and packet exploits, including the Electric Chest, the Robit,
+Obsidian TNT, and the Stopwatch and Weather Orb. The patcher rewrites 15 classes in
+`Mekanism-v5.5.6.bugfix1.jar` and adds `VoltzMekanism` and `BalancedTimeItems`.
+
+Verified with a server-side test harness on a dedicated Forge 1.5.2 server and on MCPC+
+1.5.2 (Legacy-653). Every bug below except `tntsource` reproduced on the stock jar and was
+gone on the patched one, on both servers.
+
+<details>
+<summary><b>1. <code>chestcrash</code> — a hopper on an Electric Chest crashes the server</b></summary>
+
+**The bug.** `TileEntityElectricChest.getAccessibleSlotsFromSide` builds its slot list one
+past the end of the array:
+
+```java
+int[] ret = new int[55];
+for (int i = 0; i <= ret.length; i++) ret[i] = i;   // writes ret[55]
+```
+
+Every side except the bottom throws. A hopper or pipe asks for the side it faces, so the
+exception comes out of a tile entity tick and takes the server down — and again on every
+restart, because the chunk loads with the hopper still in place. That fits the ban list's
+"corrupts chunks".
+
+**The patch.** `new int[54]` and `i < ret.length`: storage slots 0–53, the same 54 that
+`getSizeInventorySide` reports. The bottom face still exposes only the energy slot.
+
+**Verified.** Stock: `ArrayIndexOutOfBoundsException: 55`. Patched: 54 slots.
+
+</details>
+
+<details>
+<summary><b>2. <code>chestdupe</code> — Electric Chest item dupe, and chests inside chests</b></summary>
+
+**The bug.** An Electric Chest opened from the hand saves through `getItemStack()`:
+
+```java
+public ItemStack getItemStack() {
+    return entityPlayer.getCurrentEquippedItem();   // whatever is held NOW
+}
+```
+
+If the held slot changes while the GUI is open, every later save writes the chest's
+contents into the new item instead. Another Mekanism machine item accepts that inventory,
+and the chest keeps its own copy.
+
+Nothing stops an Electric Chest going inside an Electric Chest either, and each one carries
+its whole inventory in its NBT.
+
+**The patch.**
+
+- The inventory is bound to the slot and the exact stack it was opened from. Once that
+  stack leaves the slot, saves do nothing and the server closes the GUI.
+- `SlotElectricChest.isItemValid` and `TileEntityElectricChest.isItemValidForSlot` refuse
+  Electric Chests. Slots in the player's own inventory are unaffected.
+
+**Verified.** Stock: a machine item switched into the held slot picked up an `Items` tag
+holding the chest's contents, and a chest was accepted into a chest slot and through
+automation. Patched: no tag, the chest kept its contents, and both inserts were refused.
+
+</details>
+
+<details>
+<summary><b>3. <code>chestremote</code> — open or re-password any Electric Chest from anywhere</b></summary>
+
+**The bug.** The password screen runs on the client, which then sends the chest's
+coordinates to the server:
+
+```java
+TileEntityElectricChest chest = (TileEntityElectricChest) world.getBlockTileEntity(x, y, z);
+chest.password = pass;
+chest.authenticated = true;
+```
+
+The server checks nothing — not the distance, not even that a chest is there. Any client
+can re-password, unlock or open any Electric Chest by naming its coordinates.
+
+**The patch.** The coordinates must name a loaded Electric Chest within 8 blocks, the reach
+vanilla chests use. Anything else is dropped and logged, at most once per player every 10
+seconds:
+
+```
+[VoltzFixes] refused Electric Chest packet for 10,180,256 (out of reach) from Steve
+```
+
+Entering a password is still checked on the client, against a copy the server syncs to it.
+The server never sees what was typed, so that part cannot be fixed without a client change.
+
+**Verified.** From 30 blocks away, stock let the password be changed and opened the chest.
+Patched refused both.
+
+</details>
+
+<details>
+<summary><b>4. <code>machinedupe</code> — Mekanism GUIs outlive their machine</b></summary>
+
+**The bug.** `TileEntityContainerBlock.isUseableByPlayer` is `return true`. Every Mekanism
+machine and the Electric Chest inherit it, so an open GUI stays live at any distance, and
+after the machine is broken or wrenched.
+
+**The patch.** The vanilla chest rule: the tile entity must still be the one at its
+position, and the player within 8 blocks. Otherwise the server closes the GUI.
+
+**Verified.** Stock: usable from 30 blocks, and after the block was removed. Patched: not
+usable in either case, and still usable when adjacent.
+
+</details>
+
+<details>
+<summary><b>5. <code>robitdupe</code> — open any Robit's inventory from anywhere</b></summary>
+
+**The bug.** The Robit GUI buttons send the Robit's entity id, and the server opens that
+Robit's GUI without checking anything. The Robit containers' `canInteractWith` is
+`return true`, so a Robit's inventory also stays open after it is picked up or killed.
+
+**The patch.** The id must be a live Robit within 8 blocks, or no GUI opens. Robit GUIs
+close when the Robit dies or goes out of reach.
+
+**Verified.** Stock: a Robit's inventory opened from 30 blocks, and stayed usable after the
+Robit died. Patched: nothing opened, and the container was closed in both cases.
+
+</details>
+
+<details>
+<summary><b>6. <code>tntdupe</code> — breaking Obsidian TNT drops two</b></summary>
+
+**The bug.** `BlockObsidianTNT.onBlockDestroyedByPlayer`:
+
+```java
+if ((meta & 1) == 0) {
+    dropBlockAsItem_do(world, x, y, z, new ItemStack(Mekanism.ObsidianTNT, 1, 0));
+}
+```
+
+The normal harvest has already dropped the block, so every unprimed break gives two.
+Vanilla TNT only primes itself here.
+
+**The patch.** That drop is removed. Priming is unchanged.
+
+**Verified.** Stock: the method spawned one extra item. Patched: none.
+
+</details>
+
+<details>
+<summary><b>7. <code>tntsource</code> — Obsidian TNT explodes with no source</b></summary>
+
+**The bug.** `EntityObsidianTNT.explode()` calls `world.createExplosion(null, ...)`. Vanilla
+TNT passes itself. MCPC+ hands that entity to `EntityExplodeEvent`, so with `null` there is
+nothing to attribute the blast to.
+
+**The patch.** It passes itself.
+
+Not exercised by the test harness. It is a one-instruction change (`aconst_null` to
+`aload_0`), and the class passes bytecode verification.
+
+</details>
+
+<details>
+<summary><b>8. <code>timeitems</code> — BalancedTimeItems: the Stopwatch and Weather Orb</b></summary>
+
+**The bug.** The Stopwatch and Weather Orb screens send a packet, and the server trusts it:
+
+```java
+player.getCurrentEquippedItem().damageItem(4999, player);
+MekanismUtils.setHourForward(world, dataStream.readInt());
+```
+
+It never checks that the held item is a Stopwatch, or that it has recharged. Any client can
+change the time or weather at will.
+
+**The patch.** BalancedTimeItems runs first. The sender must hold the real item, fully
+recharged. Then the configured mode decides:
+
+| Mode | What happens |
+|---|---|
+| `allow` | stock behaviour, subject to the cooldown |
+| `disable` | nothing; the player is told the item is disabled |
+| `command` | the change is cancelled and a command runs as the player instead |
+
+Commands go through Bukkit on MCPC+, so plugin commands such as `/voteday` work, and
+through the vanilla command manager on plain Forge.
+
+`config/BalancedTimeItems.cfg`, comments trimmed:
+
+```
+stopwatch {
+    I:"Cooldown Seconds"=250
+    S:Mode=allow
+    S:"Sunrise Command"=voteday
+    S:"Noon Command"=voteday
+    S:"Sunset Command"=votenight
+    S:"Midnight Command"=votenight
+}
+
+"weather orb" {
+    I:"Cooldown Seconds"=250
+    S:Mode=allow
+    S:"Clear Command"=votesun
+    S:"Storm Command"=voterain
+    S:"Haze Command"=voterain
+    S:"Rain Command"=voterain
+}
+```
+
+- **Cooldown Seconds** is per player. The item's damage is set to match, capped at the
+  stock 250 seconds, so its bar shows the wait.
+- Commands need no leading slash. `{player}` becomes the player's name. An empty command
+  makes that choice unavailable in `command` mode.
+
+**Verified.** Stock: holding dirt changed the time, and a Stopwatch could be used again
+instantly. Patched: both refused. `disable` and `command` modes behaved as above, and on
+MCPC+ the command ran through Bukkit (`* VTest voted for noon via VTest`).
+
+</details>
+
+---
+
+## ICBM Explosion 1.2.1
+
+Two fixes for explosives that never stop, or flood the server with entities. The patcher
+rewrites four classes in `ICBM_Explosion_v1.2.1.172.jar` and adds `VoltzICBM`.
+
+Verified with the same harness on the dedicated Forge server. On MCPC+ the explosions never
+ticked in the harness at all — Spigot's entity activation skips entities with no player
+nearby — so they were not exercised there. Neither patch has any platform-specific code.
+
+<details>
+<summary><b>1. <code>redmatter</code> — a Red Matter black hole never ends</b></summary>
+
+**The bug.** An ICBM explosion entity runs until its explosive's `doBaoZha` returns
+`false`. Red matter's always returns `true`. The black hole is saved with the chunk,
+rescans a radius-35 sphere every tick even once there is nothing left to eat, and deletes
+every non-living entity within 4 blocks, dropped items included.
+
+**The patch.** It ends after **Red Matter Max Ticks**. The tick count is saved with the
+entity, so a black hole already older than the limit ends on its next tick.
+
+**Verified.** Stock: still alive after 160 ticks. Patched with the limit set to 100: gone.
+
+</details>
+
+<details>
+<summary><b>2. <code>sonic</code> — Sonic and Hypersonic flood the server with flying blocks</b></summary>
+
+**The bug.** Both explosives cast rays and queue every position a ray passes through, 0.3
+blocks at a time, so each block is queued many times over. Then nearly every block they
+break within about 7 blocks of the centre becomes a flying block entity.
+
+**The patch.**
+
+- Each block is queued once.
+- Past **Max Flying Blocks Per Sonic Explosion**, blocks are still broken but no longer
+  become entities.
+
+**Measured** over 200 ticks per explosion on a Ryzen 7 9700X. Terrain differs per run, so
+these are ranges:
+
+| | Stock | Patched |
+|---|---|---|
+| Hypersonic positions queued | 31,342–35,820 | 5,236–7,984 |
+| Hypersonic flying blocks at once | 2,575–3,174 | 256 |
+| Hypersonic mean tick | 4.9–6.6 ms | 2.8–2.9 ms |
+| Sonic positions queued | 6,818–7,897 | 809–1,395 |
+
+</details>
+
+`config/VoltzFixes-ICBM.cfg`. `0` restores the stock behaviour for either:
+
+```
+general {
+    I:"Max Flying Blocks Per Sonic Explosion"=256
+    I:"Red Matter Max Ticks"=3000
+}
+```
+
+---
+
+## Modular Powersuits 0.7.0
+
+<details>
+<summary><b><code>blink</code> — Blink Drive leaves you inside walls</b></summary>
+
+**The bug.** Blink Drive teleports to the raw point its ray hits, without checking that the
+player fits there. Aim at the floor right against a wall and the player's hitbox ends up
+inside the wall.
+
+That matters because of how 1.5.2 validates movement. `NetServerHandler` only rejects a
+move if the player was clear of blocks when it started:
+
+```java
+boolean startedClear = world.getCollidingBoundingBoxes(player, box.contract(0.0625)).isEmpty();
+...
+if (startedClear && (movedWrongly || !endsClear)) reject();
+```
+
+A player already inside a block is never corrected, so a modified client walks straight
+through walls.
+
+**The patch.** The destination is checked first. If the player would collide there, it
+steps back toward them a quarter block at a time to the first clear spot, or does not
+teleport at all. A clear destination is used unchanged.
+
+**Verified** on Forge. Blinking onto a floor block beside a wall, stock left the hitbox a
+quarter block inside the wall, and patched landed a quarter block clear of it. On MCPC+ the
+harness's stub connection cannot complete a teleport, so it was not exercised there; the
+teleport call itself is the one stock makes.
+
+</details>
+
+Lux Capacitor, Plasma Cannon, Blade Launcher and Active Camouflage were also decompiled and
+checked for crashes, dupes and exploits. None turned up — they work as designed, so they
+are not patched. Whether to allow them is a balance call for each server.
+
 ## Build
 
 <details>
@@ -388,10 +708,11 @@ Kept quiet deliberately:
 ./build.sh /path/to/Atomic_Science_v0.6.2.117.jar
 ```
 
-Builds all three patched jars, skipping any whose source jar is missing. Needs `javac`
+Builds every patched jar, skipping any whose source jar is missing. Needs `javac`
 (any version), a Java 8 `javac` for the helper classes, ASM, and `curl` on first run.
 
-Override paths with `MODS`, `AS_SRC`, `MPSA_SRC`, `MFFS_SRC`, `FORGE`, `ASM`, `JAVAC8`.
+Override paths with `MODS`, `AS_SRC`, `MPSA_SRC`, `MFFS_SRC`, `MEK_SRC`, `ICBM_SRC`, `MPS_SRC`,
+`FORGE`, `ASM`, `JAVAC8`.
 
 Helper classes compile against the **Forge universal zip**, downloaded into `build/` once
 and cached — deliberately not against the launcher's `bin/minecraft.jar`, which PolyMC
@@ -422,6 +743,9 @@ the stock ones:
 |---|---|
 | `Atomic_Science_v0.6.2.117.jar` | `Atomic_Science_v0.6.2.117-patched.jar` |
 | `MPSA-0.2.3-144_MPS-531+.jar` | `MPSA-0.2.3-144_MPS-531+-patched.jar` |
+| `Mekanism-v5.5.6.bugfix1.jar` | `Mekanism-v5.5.6.bugfix1-patched.jar` |
+| `ICBM_Explosion_v1.2.1.172.jar` | `ICBM_Explosion_v1.2.1.172-patched.jar` |
+| `ModularPowersuits-0.7.0-534.jar` | `ModularPowersuits-0.7.0-534-patched.jar` |
 
 **Clients need no changes at all.** Players keep the unmodified Voltz pack — nothing to
 download, nothing to install, no launcher changes. Every patch lives in code that only
@@ -433,6 +757,8 @@ runs on the server:
 - the Assembler's wear loop runs on the tile entity
 - `CommonTickHandler` is the server half of the magnet; item positions are server
   authoritative, which is the whole reason that fix is needed
+- the Mekanism fixes are in packet handlers, server-side GUI checks and tile entity methods
+- ICBM explosions and the Blink Drive teleport are resolved on the server
 
 FML 1.5.2 matches mods on modid and version strings, not file hashes, and neither is
 changed by these patches — so a patched server accepts stock clients with no mod-mismatch
@@ -440,7 +766,7 @@ screen. **Verified:** an unmodified client connected to a fully patched server a
 fix behaved correctly, including ones with visible client-side effects like items flying
 toward the player.
 
-Both patched jars keep their original mod id and version, so they can be rolled back by
+Every patched jar keeps its original mod id and version, so they can be rolled back by
 swapping the stock jars back in. Every fix can also be turned off individually in its
 config file without replacing anything.
 
@@ -459,9 +785,39 @@ MPSA-0.2.3-144_MPS-531+-patched.jar
   added   andrew/powersuits/VoltzMagnetConfig.class
   changed andrew/powersuits/tick/CommonTickHandler.class   server-side item pull
           andrew/powersuits/common/CommonProxy.class       config init hook
+
+Mekanism-v5.5.6.bugfix1-patched.jar
+  added   mekanism/common/VoltzMekanism.class (and 2 inner classes)
+          mekanism/common/BalancedTimeItems.class
+  changed mekanism/common/TileEntityElectricChest.class      slot list, no nesting
+          mekanism/common/SlotElectricChest.class            no nesting
+          mekanism/common/InventoryElectricChest.class       bound to its stack
+          mekanism/common/ContainerElectricChest.class       item GUI closes when unbound
+          mekanism/common/network/PacketElectricChest.class  coordinate check
+          mekanism/common/TileEntityContainerBlock.class     machine GUI reach
+          mekanism/common/CommonProxy.class                  Robit GUI lookup
+          mekanism/common/ContainerRobitMain.class           Robit GUI reach
+          mekanism/common/ContainerRobitInventory.class      Robit GUI reach
+          mekanism/common/ContainerRobitSmelting.class       Robit GUI reach
+          mekanism/common/BlockObsidianTNT.class             extra drop removed
+          mekanism/common/EntityObsidianTNT.class            explosion source
+          mekanism/common/network/PacketTime.class           BalancedTimeItems
+          mekanism/common/network/PacketWeather.class        BalancedTimeItems
+          mekanism/common/Mekanism.class                     config init hook
+
+ICBM_Explosion_v1.2.1.172-patched.jar
+  added   icbm/zhapin/VoltzICBM.class
+  changed icbm/zhapin/zhapin/ex/ExHongSu.class        red matter lifetime
+          icbm/zhapin/zhapin/ex/ExShengBuo.class      queue dedupe, flying block cap
+          icbm/zhapin/zhapin/ex/ExChaoShengBuo.class  queue dedupe, flying block cap
+          icbm/zhapin/ZhuYaoZhaPin.class              config init hook
+
+ModularPowersuits-0.7.0-534-patched.jar
+  added   net/machinemuse/powersuits/VoltzMPS.class
+  changed net/machinemuse/powersuits/powermodule/movement/BlinkDriveModule.class   teleport check
 ```
 
-Nothing else in either jar is touched — no ids, no recipes, no rendering, no packets.
+Nothing else is touched — no ids, no recipes, no rendering, and no packet formats change.
 
 </details>
 
@@ -475,6 +831,8 @@ not affiliated with or endorsed by any of them.
 | Atomic Science | Calclavia |
 | Andrew2448's Modular Powersuits Addon | Andrew2448 |
 | MachineMuse's Modular Powersuits | MachineMuse |
+| Mekanism | aidancbrady |
+| ICBM | Calclavia |
 
-The Magnet module patched here belongs to the **Addon**, not the base mod — Modular
-Powersuits is listed because the addon depends on it, and nothing in it is modified.
+The Magnet module patched here belongs to the **Addon**; the Blink Drive fix is in the base
+Modular Powersuits mod.
