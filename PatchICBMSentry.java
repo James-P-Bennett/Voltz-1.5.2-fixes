@@ -14,6 +14,12 @@ import java.util.zip.*;
  *   multiblock     TPaoTaiQi.onActivated needs reach, TCiGuiPao.onDestroy needs an adjacent dummy
  *   ammodupe       TPaoTaiZhan.isUseableByPlayer -> VoltzSentry.usableByPlayer
  *                  BlockTurretPlatform.dropEntireInventory empties each slot before dropping it
+ *   listeners      TileEntityTerminal playersUsing: joined within reach, pruned before each send
+ *   consolecap     TileEntityTerminal.addToConsole keeps the last 100 lines
+ *   targetcommand  CommandTarget: Boolean.getBoolean -> Boolean.parseBoolean
+ *   antimatterammo TCiGuiPao.onWeaponActivated: Object.equals -> ItemStack.isItemEqual
+ *   doubleenergy   TPaoTaiZiDong.onWeaponActivated no longer takes the shot energy a second time
+ *   accesscommands CommandUser / CommandAccess checked by VoltzSentry.accessCommandBlocked
  *
  * The platform terminal runs each command as whatever username the packet names, from any
  * distance, so any client can destroy or take over a platform while its owner is online.
@@ -36,14 +42,20 @@ public class PatchICBMSentry {
     static final String PLATFORM = "icbm/gangshao/platform/TPaoTaiZhan";
     static final String PLATFORM_BLOCK = "icbm/gangshao/platform/BlockTurretPlatform";
     static final String IINV     = "net/minecraft/inventory/IInventory";
+    static final String CMD      = "icbm/gangshao/terminal/command/";
+    static final String SENTRY   = "icbm/gangshao/turret/sentries/TPaoTaiZiDong";
+    static final String STACK    = "net/minecraft/item/ItemStack";
 
     static boolean doTerminal, doTurret, doMulti, doAmmo;
     static boolean hitTerminal, hitTurret, hitMount, hitRailgun, hitUsable, hitDrop;
+    static boolean doListeners, doConsole, doTarget, doAntimatter, doEnergy, doAccess;
+    static int listenerHits, accessHits;
+    static boolean hitConsole, hitTarget, hitAntimatter, hitEnergy;
 
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
             System.err.println("usage: PatchICBMSentry <in.jar> <out.jar> <patches> <VoltzSentry.class>");
-            System.err.println("patches: terminal,turretpackets,multiblock,ammodupe");
+            System.err.println("patches: terminal,turretpackets,multiblock,ammodupe,listeners,consolecap,targetcommand,antimatterammo,doubleenergy,accesscommands");
             System.exit(2);
         }
         for (String p : args[2].split(",")) {
@@ -52,6 +64,12 @@ public class PatchICBMSentry {
             else if (p.equals("turretpackets")) doTurret = true;
             else if (p.equals("multiblock")) doMulti = true;
             else if (p.equals("ammodupe")) doAmmo = true;
+            else if (p.equals("listeners")) doListeners = true;
+            else if (p.equals("consolecap")) doConsole = true;
+            else if (p.equals("targetcommand")) doTarget = true;
+            else if (p.equals("antimatterammo")) doAntimatter = true;
+            else if (p.equals("doubleenergy")) doEnergy = true;
+            else if (p.equals("accesscommands")) doAccess = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -68,6 +86,12 @@ public class PatchICBMSentry {
             if (doMulti && n.equals(RAILGUN + ".class"))     d = patchMultiblock(d, RAILGUN);
             if (doAmmo && n.equals(PLATFORM + ".class"))     d = patchUsable(d);
             if (doAmmo && n.equals(PLATFORM_BLOCK + ".class")) d = patchDrop(d);
+            if (doListeners && n.equals(TERMINAL + ".class")) d = patchTerminalListeners(d);
+            if (doConsole && n.equals(TERMINAL + ".class"))   d = patchConsole(d);
+            if (doTarget && n.equals(CMD + "CommandTarget.class")) d = patchTarget(d);
+            if (doAntimatter && n.equals(RAILGUN + ".class")) d = patchAntimatter(d);
+            if (doEnergy && n.equals(SENTRY + ".class"))      d = patchEnergy(d);
+            if (doAccess && (n.equals(CMD + "CommandUser.class") || n.equals(CMD + "CommandAccess.class"))) d = patchAccess(d);
             out.put(n, d);
         }
         zf.close();
@@ -77,6 +101,12 @@ public class PatchICBMSentry {
         if (doTurret && !hitTurret) throw new IllegalStateException("turretpackets patch did not apply");
         if (doMulti && !(hitMount && hitRailgun)) throw new IllegalStateException("multiblock patch did not apply");
         if (doAmmo && !(hitUsable && hitDrop)) throw new IllegalStateException("ammodupe patch did not apply");
+        if (doListeners && listenerHits < 3) throw new IllegalStateException("listeners: expected a join and 2 sends, found " + listenerHits);
+        if (doConsole && !hitConsole) throw new IllegalStateException("consolecap patch did not apply");
+        if (doTarget && !hitTarget) throw new IllegalStateException("targetcommand patch did not apply");
+        if (doAntimatter && !hitAntimatter) throw new IllegalStateException("antimatterammo patch did not apply");
+        if (doEnergy && !hitEnergy) throw new IllegalStateException("doubleenergy patch did not apply");
+        if (doAccess && accessHits != 2) throw new IllegalStateException("accesscommands: expected 2 commands, found " + accessHits);
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
         for (Map.Entry<String, byte[]> en : out.entrySet()) {
@@ -249,6 +279,159 @@ public class PatchICBMSentry {
             if (hits != 1) throw new IllegalStateException("ammodupe: expected 1 slot read in dropEntireInventory, found " + hits);
             m.maxStack = Math.max(m.maxStack, 3);
             hitDrop = true;
+        }
+        return write(cn);
+    }
+
+    /**
+     * TileEntityTerminal.playersUsing: joined by the GUI-open packet from any distance, and only
+     * left when the client says the GUI closed. The join becomes VoltzSentry.addListener (within
+     * reach), and every walk over the set (tick and sendTerminalOutputToClients) gets
+     * VoltzSentry.pruneListeners first.
+     */
+    static byte[] patchTerminalListeners(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.GETFIELD || !((FieldInsnNode) i).name.equals("playersUsing")) continue;
+                AbstractInsnNode nx = next(i);
+                if (nx instanceof MethodInsnNode && ((MethodInsnNode) nx).name.equals("iterator")) {
+                    InsnList prune = new InsnList();
+                    prune.add(new InsnNode(Opcodes.DUP));
+                    prune.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                    prune.add(new MethodInsnNode(Opcodes.INVOKESTATIC, HELPER, "pruneListeners", "(Ljava/util/Set;Ljava/lang/Object;)V", false));
+                    m.instructions.insert(i, prune);
+                    m.maxStack = m.maxStack + 2;
+                    listenerHits++;
+                } else if (m.name.equals("handlePacketData") && nx.getOpcode() == Opcodes.ALOAD && ((VarInsnNode) nx).var == 4) {
+                    AbstractInsnNode call = next(nx);
+                    if (!(call instanceof MethodInsnNode) || !((MethodInsnNode) call).name.equals("add")) continue;
+                    m.instructions.insertBefore(call, new VarInsnNode(Opcodes.ALOAD, 0));
+                    m.instructions.set(call, new MethodInsnNode(Opcodes.INVOKESTATIC, HELPER, "addListener",
+                            "(Ljava/util/Set;Ljava/lang/Object;Ljava/lang/Object;)Z", false));
+                    m.maxStack = m.maxStack + 1;
+                    listenerHits++;
+                }
+            }
+        }
+        return write(cn);
+    }
+
+    /**
+     * TileEntityTerminal.addToConsole only ever appends, and every command resends the whole list
+     * to every viewer in one packet; past ~630 lines its 16-bit length wraps. Prepend
+     * `VoltzSentry.trimConsole(getTerminalOuput())`, which keeps the newest 99 before the add.
+     */
+    static byte[] patchConsole(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("addToConsole") || !m.desc.equals("(Ljava/lang/String;)Z")) continue;
+            InsnList g = new InsnList();
+            g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, TERMINAL, "getTerminalOuput", "()Ljava/util/List;", false));
+            g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, HELPER, "trimConsole", "(Ljava/util/List;)V", false));
+            m.instructions.insert(g);
+            m.maxStack = Math.max(m.maxStack, 1);
+            hitConsole = true;
+        }
+        return write(cn);
+    }
+
+    /** `target <type> true|false` parsed its flag with Boolean.getBoolean, a system property lookup. */
+    static byte[] patchTarget(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.INVOKESTATIC) continue;
+                MethodInsnNode mi = (MethodInsnNode) i;
+                if (!mi.owner.equals("java/lang/Boolean") || !mi.name.equals("getBoolean")) continue;
+                mi.name = "parseBoolean";
+                hitTarget = true;
+            }
+        }
+        return write(cn);
+    }
+
+    /**
+     * The railgun decides antimatter rounds with `ammo.equals(ZhuYaoGangShao.antimatterBullet)`,
+     * a reference comparison that is never true, so antimatter rounds fire as normal ones. It
+     * becomes ItemStack.isItemEqual (same item id and damage).
+     */
+    static byte[] patchAntimatter(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("onWeaponActivated")) continue;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.INVOKEVIRTUAL) continue;
+                MethodInsnNode mi = (MethodInsnNode) i;
+                if (!mi.owner.equals("java/lang/Object") || !mi.name.equals("equals")) continue;
+                AbstractInsnNode pv = prev(mi);
+                if (!(pv instanceof FieldInsnNode) || !((FieldInsnNode) pv).name.equals("antimatterBullet")) continue;
+                m.instructions.set(mi, new MethodInsnNode(Opcodes.INVOKEVIRTUAL, STACK, "func_77969_a", "(L" + STACK + ";)Z", false));   // isItemEqual
+                hitAntimatter = true;
+            }
+        }
+        return write(cn);
+    }
+
+    /**
+     * TPaoTaiZiDong.onWeaponActivated calls onFire, which already subtracts the shot's energy from
+     * the platform, then subtracts it again. The second `platform.wattsReceived = ...` write in
+     * onWeaponActivated is replaced by popping its operands.
+     */
+    static byte[] patchEnergy(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("onWeaponActivated") || !m.desc.equals("()V")) continue;
+            int hits = 0;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.PUTFIELD || !((FieldInsnNode) i).name.equals("wattsReceived")) continue;
+                InsnList drop = new InsnList();
+                drop.add(new InsnNode(Opcodes.POP2));
+                drop.add(new InsnNode(Opcodes.POP));
+                m.instructions.insertBefore(i, drop);
+                m.instructions.remove(i);
+                hits++;
+            }
+            if (hits != 1) throw new IllegalStateException("doubleenergy: expected 1 energy write, found " + hits);
+            hitEnergy = true;
+        }
+        return write(cn);
+    }
+
+    /**
+     * CommandUser and CommandAccess processCommand(player, terminal, args) get, at their head,
+     *
+     *     if (VoltzSentry.accessCommandBlocked(player, terminal, args)) return true;
+     *
+     * which closes three gaps: `users add` silently re-adding an existing owner or admin as a
+     * plain user, `users remove` of someone at or above the sender's level, and `access set`
+     * granting a level above the sender's own.
+     */
+    static byte[] patchAccess(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("processCommand")) continue;
+            LabelNode carryOn = new LabelNode();
+            InsnList g = new InsnList();
+            g.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            g.add(new VarInsnNode(Opcodes.ALOAD, 2));
+            g.add(new VarInsnNode(Opcodes.ALOAD, 3));
+            g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, HELPER, "accessCommandBlocked",
+                    "(Ljava/lang/Object;Ljava/lang/Object;[Ljava/lang/String;)Z", false));
+            g.add(new JumpInsnNode(Opcodes.IFEQ, carryOn));
+            g.add(new InsnNode(Opcodes.ICONST_1));
+            g.add(new InsnNode(Opcodes.IRETURN));
+            g.add(carryOn);
+            m.instructions.insert(g);
+            m.maxStack = Math.max(m.maxStack, 3);
+            accessHits++;
         }
         return write(cn);
     }

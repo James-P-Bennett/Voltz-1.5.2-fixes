@@ -13,9 +13,9 @@ Each patch is selectable individually.
 | [MPS Addons 0.2.3](#mps-addons-023) | `magnet` |
 | [MFFS 3.1.0 — BalancedMFFS](#mffs-310--balancedmffs) | `zones` · `logging` · `mergedupe` · `stabilizedupe` |
 | [Mekanism 5.5.6](#mekanism-556) | `chestcrash` · `chestdupe` · `chestremote` · `machinedupe` · `robitdupe` · `tntdupe` · `tntsource` · `timeitems` |
-| [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` · `remote` · `explosivetype` · `empradius` · `launchertier` · `multiblock` · `cruiselauncher` · `designator` · `defuser` · `missilestack` |
-| [ICBM Sentry 1.2.1](#icbm-sentry-121) | `terminal` · `turretpackets` · `multiblock` · `ammodupe` |
-| [ICBM Contraption 1.2.1](#icbm-contraption-121) | `camouflage` · `detector` |
+| [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` · `remote` · `explosivetype` · `empradius` · `launchertier` · `multiblock` · `cruiselauncher` · `designator` · `defuser` · `missilestack` · `listeners` · `radarradius` · `radargun` · `chunkload` |
+| [ICBM Sentry 1.2.1](#icbm-sentry-121) | `terminal` · `turretpackets` · `multiblock` · `ammodupe` · `listeners` · `consolecap` · `targetcommand` · `antimatterammo` · `doubleenergy` · `accesscommands` |
+| [ICBM Contraption 1.2.1](#icbm-contraption-121) | `camouflage` · `detector` · `listeners` · `chunkload` |
 | [Modular Powersuits 0.7.0](#modular-powersuits-070) | `blink` |
 | [MineFactoryReloaded 2.6.4](#minefactoryreloaded-264) | `ghostslot` |
 
@@ -687,9 +687,9 @@ MCPC+ the command ran through Bukkit (`* VTest voted for noon via VTest`).
 
 ## ICBM Explosion 1.2.1
 
-Eleven fixes: explosives that never stop or flood the server with entities, packet handlers
-that trust the client, and item dupes and losses. The patcher rewrites thirteen classes in
-`ICBM_Explosion_v1.2.1.172.jar` and adds `VoltzICBM`.
+Fifteen fixes: explosives that never stop or flood the server with entities, packet handlers
+that trust the client, item dupes and losses, and a chunk-loading and listener leak. The patcher
+rewrites fourteen classes in `ICBM_Explosion_v1.2.1.172.jar` and adds `VoltzICBM`.
 
 Verified with the same harness on the dedicated Forge server. On MCPC+ the explosions never
 ticked in the harness at all — Spigot's entity activation skips entities with no player
@@ -936,6 +936,64 @@ stock and 15 when patched.
 
 </details>
 
+<details>
+<summary><b>12. <code>listeners</code> — GUI listener sets never emptied</b></summary>
+
+**The bug.** The EMP tower, launcher screen, radar and cruise launcher keep a set of players
+with their GUI open and send each one an update every tick. A player joins from any distance,
+and is removed only when their client says the GUI closed, so a disconnect, death or teleport
+leaves them in the set (and the packets flowing) until the chunk unloads.
+
+**The patch.** A player joins only within 10 blocks, and each tick drops any listener that is
+dead, in another world, or more than 16 blocks away.
+
+**Verified** on the Forge test server as part of the detector and terminal listener tests below;
+a subscribe from 100 blocks away was accepted on stock and refused when patched.
+
+</details>
+
+<details>
+<summary><b>13. <code>radarradius</code> — an unclamped radar radius</b></summary>
+
+**The bug.** The radar's GUI clamps its alarm and safety radius to 0..500, but the server stores
+any value a packet sends.
+
+**The patch.** Every radius write is clamped to 0..500.
+
+**Verified** on the Forge test server: a radius of 100,000 was stored on stock and clamped to 500
+when patched; a GUI value of 40 was kept on both.
+
+</details>
+
+<details>
+<summary><b>14. <code>radargun</code> — a free radar gun ping</b></summary>
+
+**The bug.** The radar gun's packet stores the player's target coordinates on the held gun and
+drains 1,000 J, without the client's check that the gun has more than 1,000 J.
+
+**The patch.** The server checks the charge first.
+
+**Verified** on the Forge test server: an empty radar gun's packet stored its coordinates on
+stock and was refused when patched; a charged gun worked on both.
+
+</details>
+
+<details>
+<summary><b>15. <code>chunkload</code> — a packet loads a far chunk</b></summary>
+
+**The bug.** The shared packet router looks up a tile packet's target with `getBlockTileEntity`,
+which loads (or generates) the chunk at the client's coordinates. A client spamming far
+coordinates can force the server to generate chunks. The router class ships in six Voltz jars and
+Galacticraft's own copy, so the copy that loads is not ours to patch.
+
+**The patch.** ICBM's own packet handlers gate the router: a tile packet whose chunk is not
+already loaded is dropped.
+
+**Verified** on the Forge test server: a tile packet aimed 100,000 blocks away loaded a new chunk
+on stock and was dropped when patched.
+
+</details>
+
 `config/VoltzFixes-ICBM.cfg` covers `redmatter` and `sonic`. `0` restores the stock behaviour for either:
 
 ```
@@ -949,9 +1007,9 @@ general {
 
 ## ICBM Sentry 1.2.1
 
-Four fixes for turret platforms and turrets that obey any client, and an ammo dupe. The patcher
-rewrites six classes in `ICBM_Sentry_v1.2.1.172.jar` and adds `VoltzSentry`. Tested on Forge
-only.
+Ten fixes for turret platforms and turrets that obey any client, an ammo dupe, a listener leak,
+an unbounded console, and broken commands and combat logic. The patcher rewrites ten classes in
+`ICBM_Sentry_v1.2.1.172.jar` and adds `VoltzSentry`. Tested on Forge only.
 
 <details>
 <summary><b>1. <code>terminal</code> — run platform commands as the owner, from anywhere</b></summary>
@@ -1040,10 +1098,102 @@ and each slot is emptied as its contents drop.
 
 </details>
 
+<details>
+<summary><b>5. <code>listeners</code> — the terminal listener set never emptied</b></summary>
+
+**The bug.** A turret platform's terminal keeps a set of players with the GUI open and sends
+each one the console every few ticks. A player joins from any distance and is removed only when
+their client says the GUI closed.
+
+**The patch.** A player joins only within 10 blocks, and each send drops any listener that is
+dead, in another world, or more than 16 blocks away.
+
+**Verified** on the Forge test server:
+
+| Terminal GUI | Stock | Patched |
+|---|---|---|
+| Subscribe from 100 blocks away | joined | refused |
+| Subscribe from 3 blocks away | joined | joined |
+| Still listed after moving 100 blocks away | yes | pruned |
+
+</details>
+
+<details>
+<summary><b>6. <code>consolecap</code> — the terminal console grows without bound</b></summary>
+
+**The bug.** The terminal only ever appends console lines, and every command resends the whole
+list to each viewer in one packet. Past about 630 lines the packet's 16-bit length wraps and
+corrupts the stream for anyone with that platform open. A client can spam commands to force it.
+
+**The patch.** The console keeps its newest 100 lines.
+
+**Verified** on the Forge test server: 200 lines left the console at 200 on stock and 100 when
+patched.
+
+</details>
+
+<details>
+<summary><b>7. <code>targetcommand</code> — <code>target &lt;type&gt; true</code> never worked</b></summary>
+
+**The bug.** The `target` command parsed its on/off flag with `Boolean.getBoolean`, which reads
+a Java system property instead of the argument, so it was always false. Only the no-argument
+toggle worked.
+
+**The patch.** It parses the argument with `Boolean.parseBoolean`.
+
+**Verified by construction:** the one `Boolean.getBoolean` call in the command becomes
+`Boolean.parseBoolean`, checked with an ASM verifier. Not exercised in game.
+
+</details>
+
+<details>
+<summary><b>8. <code>antimatterammo</code> — antimatter rounds fired as normal</b></summary>
+
+**The bug.** The railgun decided whether a round was antimatter with `ammo.equals(antimatterBullet)`,
+a reference comparison that is never true, so antimatter rounds fired with the normal blast.
+
+**The patch.** It compares the item and damage instead (`ItemStack.isItemEqual`).
+
+**Verified by construction:** the reference compare becomes `isItemEqual`, checked with an ASM
+verifier. Not exercised in game.
+
+</details>
+
+<details>
+<summary><b>9. <code>doubleenergy</code> — each shot cost energy twice</b></summary>
+
+**The bug.** A sentry's `onWeaponActivated` subtracts the shot's energy from the platform after
+`onFire` has already subtracted it.
+
+**The patch.** The second subtraction is removed.
+
+**Verified by construction:** the duplicate energy write is removed, checked with an ASM verifier.
+Not exercised in game.
+
+</details>
+
+<details>
+<summary><b>10. <code>accesscommands</code> — access-list gaps</b></summary>
+
+**The bug.** An admin could `users add <owner>` to silently demote the owner to a plain user,
+`users remove` someone at or above their own level, or `access set` a player to a level above
+their own.
+
+**The patch.** `users add` refuses a name already listed, `users remove` needs a level above the
+target's (or the owner removing themselves), and `access set` may not grant a level above the
+sender's own.
+
+**Verified** on the Forge test server, as an admin: `users add VOwner` left the owner at OWNER
+(demoted on stock), and `access set VVictim owner` left the victim at USER (raised to OWNER on
+stock).
+
+</details>
+
 ## ICBM Contraption 1.2.1
 
-Two fixes, for the camouflage block and the proximity detector. The patcher rewrites two classes
-in `ICBM_Contraption_v1.2.1.172.jar` and adds `VoltzContraption`. Tested on Forge only.
+Three fixes, for the camouflage block, the proximity detector, and a chunk-loading and listener
+leak. The patcher rewrites three classes in `ICBM_Contraption_v1.2.1.172.jar` and adds
+`VoltzContraption`. Tested on Forge only.
 
 <details>
 <summary><b>1. <code>camouflage</code> — crash every nearby player with one packet</b></summary>
@@ -1085,6 +1235,34 @@ disabling whatever defences it triggers.
 | Mode, from 100 blocks away | applied | refused |
 | Mode, from 3 blocks away (GUI) | applied | applied |
 | Description packet setting frequency 99 | applied | ignored |
+
+</details>
+
+<details>
+<summary><b>3. <code>listeners</code> — the detector listener set never emptied</b></summary>
+
+**The bug.** The proximity detector keeps a set of players with its GUI open and sends each one
+an update every 20 ticks, joined from any distance and removed only on an explicit close.
+
+**The patch.** A player joins only within 10 blocks, and each tick drops any listener that is
+dead, in another world, or more than 16 blocks away.
+
+**Verified** on the Forge test server: a subscribe from 100 blocks away was accepted on stock and
+refused when patched.
+
+</details>
+
+<details>
+<summary><b>4. <code>chunkload</code> — a packet loads a far chunk</b></summary>
+
+**The bug.** Same as ICBM Explosion's `chunkload`: the shared packet router loads the chunk at a
+tile packet's client coordinates.
+
+**The patch.** ICBM Contraption's packet handler drops a tile packet whose chunk is not already
+loaded.
+
+**Verified by construction:** shares the guard proven in ICBM Explosion's `chunkload` test, and
+the handler override passes an ASM verifier.
 
 </details>
 
@@ -1285,28 +1463,37 @@ ICBM_Explosion_v1.2.1.172-patched.jar
           icbm/zhapin/zhapin/ex/ExShengBuo.class      queue dedupe, flying block cap
           icbm/zhapin/zhapin/ex/ExChaoShengBuo.class  queue dedupe, flying block cap
           icbm/zhapin/zhapin/TZhaDan.class            remote and set-type packet checks
-          icbm/zhapin/jiqi/TDianCiQi.class            EMP tower packet, radius clamp, dummy checks
+          icbm/zhapin/jiqi/TDianCiQi.class            EMP tower packet, radius clamp, dummy checks, listener join/prune
           icbm/zhapin/jiqi/TFaSheDi.class             tier packet, dummy checks, missile loading
           icbm/zhapin/jiqi/TFaSheJia.class            tier packet, dummy checks
-          icbm/zhapin/jiqi/TFaSheShiMuo.class         launcher screen description packet
+          icbm/zhapin/jiqi/TFaSheShiMuo.class         launcher screen description packet, listener join/prune
           icbm/zhapin/jiqi/TLeiDaTai.class            dummy checks
           icbm/zhapin/jiqi/TXiaoFaSheQi.class         description packet, missile loading
           icbm/zhapin/ZhaPinPacketGuanLi.class        laser designator checks
           icbm/zhapin/dianqi/ItJieJa.class            dead entity check
+          icbm/zhapin/jiqi/TXiaoFaSheQi.class         listener join/prune (also above)
+          icbm/zhapin/jiqi/TLeiDaTai.class            radius clamp, listener join/prune (also above)
+          icbm/zhapin/ZhaPinPacketGuanLi.class        laser designator, radar gun charge, chunk guard
 
 ICBM_Sentry_v1.2.1.172-patched.jar
   added   icbm/gangshao/VoltzSentry.class
   changed icbm/gangshao/terminal/TileEntityTerminal.class  command sender and reach
           icbm/gangshao/turret/TPaoDaiBase.class           turret packets ignored on the server
           icbm/gangshao/turret/mount/TPaoTaiQi.class       mount reach
-          icbm/gangshao/turret/mount/TCiGuiPao.class       dummy block check
+          icbm/gangshao/turret/mount/TCiGuiPao.class       dummy block check, antimatter round compare
           icbm/gangshao/platform/TPaoTaiZhan.class         GUI reach
           icbm/gangshao/platform/BlockTurretPlatform.class slots emptied as they drop
+          icbm/gangshao/terminal/TileEntityTerminal.class  command sender/reach (above), listener join/prune, console cap
+          icbm/gangshao/turret/sentries/TPaoTaiZiDong.class  no double energy charge
+          icbm/gangshao/terminal/command/CommandTarget.class   parseBoolean flag
+          icbm/gangshao/terminal/command/CommandUser.class     access-list checks
+          icbm/gangshao/terminal/command/CommandAccess.class   access-level checks
 
 ICBM_Contraption_v1.2.1.172-patched.jar
   added   icbm/wanyi/VoltzContraption.class
   changed icbm/wanyi/b/TYinXing.class                     packet ignored on the server, id clamp
-          icbm/wanyi/b/TYinGanQi.class                    detector packet checks
+          icbm/wanyi/b/TYinGanQi.class                    detector packet checks, listener join/prune
+          icbm/wanyi/WanYiPacketGuanLi.class              chunk guard
           icbm/zhapin/ZhuYaoZhaPin.class              config init hook
 
 ModularPowersuits-0.7.0-534-patched.jar
