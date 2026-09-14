@@ -15,6 +15,7 @@ Each patch is selectable individually.
 | [Mekanism 5.5.6](#mekanism-556) | `chestcrash` · `chestdupe` · `chestremote` · `machinedupe` · `robitdupe` · `tntdupe` · `tntsource` · `timeitems` |
 | [ICBM Explosion 1.2.1](#icbm-explosion-121) | `redmatter` · `sonic` |
 | [Modular Powersuits 0.7.0](#modular-powersuits-070) | `blink` |
+| [MineFactoryReloaded 2.6.4](#minefactoryreloaded-264) | `ghostslot` |
 
 ---
 
@@ -736,6 +737,48 @@ Lux Capacitor, Plasma Cannon, Blade Launcher and Active Camouflage were also dec
 checked for crashes, dupes and exploits. None turned up — they work as designed, so they
 are not patched. Whether to allow them is a balance call for each server.
 
+## MineFactoryReloaded 2.6.4
+
+<details>
+<summary><b><code>ghostslot</code> — copy your held item into any inventory, or empty any slot, from anywhere</b></summary>
+
+**The bug.** MFR filter slots (Item Router, Enchantment Router, Liquid Router, Planter,
+Unifier, LiquiCrafter, Auto-Brewer) are ghost slots: clicking one stores a size-1 copy of
+the cursor without taking it. The GUI sends packet 19 with the machine's coordinates and
+the slot number, and the server does:
+
+```java
+TileEntity te = player.worldObj.getBlockTileEntity(x, y, z);
+if (te instanceof IInventory) {
+    if (cursor == null) ((IInventory) te).setInventorySlotContents(slot, null);
+    else                ((IInventory) te).setInventorySlotContents(slot, sizeOneCopyOf(cursor));
+}
+```
+
+Nothing ties the packet to an open GUI: any coordinates, any loaded inventory, any slot, any
+distance. A modified client can write a free copy of whatever it holds into every slot of
+someone else's chest, or delete any slot's contents with an empty cursor.
+
+**The patch.** Both writes go through `VoltzMFR.setGhostSlot`, which allows them only when:
+
+- the player's open container has a `SlotFake` at that slot number
+- that slot belongs to the inventory at the packet's coordinates, at that same index
+- the container is still usable (machine still there, player within 8 blocks)
+
+That is exactly what the real GUI sends, so normal filter clicks work as before. Anything
+else is dropped and logged, at most once per player every 10 seconds:
+
+```
+[VoltzFixes] refused ghost slot write to TileEntityChest slot 0 (no matching ghost slot open) from <player>
+```
+
+**Checked** against MFR's own bytecode: the GUI sends `Slot.slotNumber`, and every stock
+container that has ghost slots gives them a slot number equal to their inventory index. The
+helper passes a mock test of the legitimate write and of each refusal case. Not yet
+exercised on a live server.
+
+</details>
+
 ## Build
 
 <details>
@@ -749,7 +792,7 @@ Builds every patched jar, skipping any whose source jar is missing. Needs `javac
 (any version), a Java 8 `javac` for the helper classes, ASM, and `curl` on first run.
 
 Override paths with `MODS`, `AS_SRC`, `MPSA_SRC`, `MFFS_SRC`, `MEK_SRC`, `ICBM_SRC`, `MPS_SRC`,
-`FORGE`, `ASM`, `JAVAC8`.
+`MFR_SRC`, `FORGE`, `ASM`, `JAVAC8`.
 
 Helper classes compile against the **Forge universal zip**, downloaded into `build/` once
 and cached — deliberately not against the launcher's `bin/minecraft.jar`, which PolyMC
@@ -783,6 +826,7 @@ the stock ones:
 | `Mekanism-v5.5.6.bugfix1.jar` | `Mekanism-v5.5.6.bugfix1-patched.jar` |
 | `ICBM_Explosion_v1.2.1.172.jar` | `ICBM_Explosion_v1.2.1.172-patched.jar` |
 | `ModularPowersuits-0.7.0-534.jar` | `ModularPowersuits-0.7.0-534-patched.jar` |
+| `MineFactoryReloaded-2.6.4-975.jar` | `MineFactoryReloaded-2.6.4-975-patched.jar` |
 
 **Clients need no changes at all.** Players keep the unmodified Voltz pack — nothing to
 download, nothing to install, no launcher changes. Every patch lives in code that only
@@ -796,6 +840,7 @@ runs on the server:
   authoritative, which is the whole reason that fix is needed
 - the Mekanism fixes are in packet handlers, server-side GUI checks and tile entity methods
 - ICBM explosions and the Blink Drive teleport are resolved on the server
+- the MFR ghost slot check is in MFR's server packet handler
 
 FML 1.5.2 matches mods on modid and version strings, not file hashes, and neither is
 changed by these patches — so a patched server accepts stock clients with no mod-mismatch
@@ -852,6 +897,10 @@ ICBM_Explosion_v1.2.1.172-patched.jar
 ModularPowersuits-0.7.0-534-patched.jar
   added   net/machinemuse/powersuits/VoltzMPS.class
   changed net/machinemuse/powersuits/powermodule/movement/BlinkDriveModule.class   teleport check
+
+MineFactoryReloaded-2.6.4-975-patched.jar
+  added   powercrystals/minefactoryreloaded/VoltzMFR.class
+  changed powercrystals/minefactoryreloaded/net/ServerPacketHandler.class   ghost slot check
 ```
 
 Nothing else is touched — no ids, no recipes, no rendering, and no packet formats change.
@@ -870,6 +919,7 @@ not affiliated with or endorsed by any of them.
 | MachineMuse's Modular Powersuits | MachineMuse |
 | Mekanism | aidancbrady |
 | ICBM | Calclavia |
+| MineFactoryReloaded | PowerCrystals |
 
 The Magnet module patched here belongs to the **Addon**; the Blink Drive fix is in the base
 Modular Powersuits mod.
