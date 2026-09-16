@@ -542,4 +542,24 @@ public class VoltzICBM {
         }
         throw new NoSuchMethodException(c.getName() + "." + name);
     }
+
+    /**
+     * Replaces an `SomeEnum.values()[index]` whose index comes from NBT or block metadata.
+     *
+     * An out-of-range value throws an ArrayIndexOutOfBoundsException out of readFromNBT or
+     * createTileEntity - that is, out of chunk loading - and it throws again every single time
+     * that chunk is read, so one bad value makes the chunk permanently unloadable. Falling back
+     * to the first constant loses that one setting and keeps the world.
+     */
+    public static Object enumAt(Object[] values, int index) {
+        if (values == null || values.length == 0) {
+            return null;
+        }
+        if (index < 0 || index >= values.length) {
+            System.out.println(TAG + "out-of-range enum ordinal " + index + " of "
+                    + values.length + ", using " + values[0]);
+            return values[0];
+        }
+        return values[index];
+    }
 }

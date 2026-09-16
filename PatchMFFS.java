@@ -10,6 +10,7 @@ import java.util.zip.*;
  *   mergedupe      TileEntityInventory.addStackToInventory   an insert into an empty slot
  *                  counts as accepted, as vanilla hoppers and pipes do, so an MFR conveyor
  *                  next to an Interdiction Matrix no longer multiplies everything it takes
+ *   enumclamp      TileEntityFortronCapacitor.readFromNBT   values()[nbt] clamped
  *   stabilizedupe  ItemModuleStablize.onProject   the Stabilize module respects ISidedInventory
  *                  instead of building its field out of slots no hopper or pipe can reach,
  *                  including the ghost copies in MFR filter slots
@@ -26,11 +27,13 @@ public class PatchMFFS {
     static final String INVENTORY_TE = "mffs/base/TileEntityInventory";
     static final String STABILIZE    = "mffs/item/module/projector/ItemModuleStablize";
     static final String SIDED        = "net/minecraft/inventory/ISidedInventory";
+    static final String FORTRON_CAP  = "mffs/tileentity/TileEntityFortronCapacitor";
 
-    static final List<String> KNOWN = Arrays.asList("mergedupe", "stabilizedupe");
+    static final List<String> KNOWN = Arrays.asList("mergedupe", "stabilizedupe", "enumclamp");
 
     static final Set<String> selected = new HashSet<String>();
     static boolean hitMerge, hitStabilize;
+    static int enumHits;
 
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
@@ -53,6 +56,11 @@ public class PatchMFFS {
             String n = ze.getName();
             if (selected.contains("mergedupe") && n.equals(INVENTORY_TE + ".class")) d = fixMerge(d);
             if (selected.contains("stabilizedupe") && n.equals(STABILIZE + ".class")) d = fixStabilize(d);
+            if (selected.contains("enumclamp") && n.equals(FORTRON_CAP + ".class")) {
+                int[] k = new int[1];
+                d = patchEnumClamp(d, "func_70307_a", HELPER, k);
+                enumHits += k[0];
+            }
             out.put(n, d);
         }
         zf.close();
@@ -62,6 +70,8 @@ public class PatchMFFS {
             throw new IllegalStateException("merge dupe fix did not apply");
         if (selected.contains("stabilizedupe") && !hitStabilize)
             throw new IllegalStateException("stabilize dupe fix did not apply");
+        if (selected.contains("enumclamp") && enumHits != 1)
+            throw new IllegalStateException("enumclamp: expected 1 TransferMode values() index, found " + enumHits);
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
         for (Map.Entry<String, byte[]> en : out.entrySet()) {
@@ -233,6 +243,55 @@ public class PatchMFFS {
             out.put(pkg + n, readAll(new FileInputStream(s)));
             System.out.println("    + inner class " + pkg + n);
         }
+    }
+
+
+    static ClassNode read(byte[] b) {
+        ClassNode cn = new ClassNode();
+        new ClassReader(b).accept(cn, ClassReader.SKIP_FRAMES);
+        return cn;
+    }
+
+    static byte[] write(ClassNode cn) {
+        ClassWriter cw = new ClassWriter(0);
+        cn.accept(cw);
+        return cw.toByteArray();
+    }
+
+    /**
+     * enumclamp: rewrites `SomeEnum.values()[index]` to go through the helper, so an
+     * out-of-range ordinal from NBT or block metadata falls back to the first constant
+     * instead of throwing out of chunk loading and failing that chunk for good.
+     *
+     * The shape is always `INVOKESTATIC values() / <push index> / AALOAD`; the element type
+     * for the cast is read back out of the values() descriptor, so this needs no hard-coded
+     * enum names.
+     */
+    static byte[] patchEnumClamp(byte[] in, String method, String helper, int[] count) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals(method)) continue;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.AALOAD) continue;
+                MethodInsnNode values = null;
+                for (AbstractInsnNode b = i.getPrevious(); b != null && values == null; b = b.getPrevious()) {
+                    if (b.getOpcode() == Opcodes.INVOKESTATIC && ((MethodInsnNode) b).name.equals("values")) {
+                        values = (MethodInsnNode) b;
+                    } else if (b.getOpcode() == Opcodes.AALOAD) {
+                        break;
+                    }
+                }
+                if (values == null) continue;
+                Type element = Type.getReturnType(values.desc).getElementType();
+                MethodInsnNode call = new MethodInsnNode(Opcodes.INVOKESTATIC, helper, "enumAt",
+                        "([Ljava/lang/Object;I)Ljava/lang/Object;", false);
+                m.instructions.set(i, call);
+                m.instructions.insert(call, new TypeInsnNode(Opcodes.CHECKCAST, element.getInternalName()));
+                count[0]++;
+            }
+        }
+        return write(cn);
     }
 
     static byte[] readAll(InputStream is) throws IOException {

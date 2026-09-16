@@ -9,6 +9,7 @@ import java.util.zip.*;
  *
  *   blink       BlinkDriveModule.onRightClick   MusePlayerUtils.teleportEntity -> VoltzMPS.blink
  *   luxevent    EntityLuxCapacitor.onImpact     setBlock / setBlockTileEntity -> VoltzMPS
+ *   enumclamp   TileEntityLuxCapacitor.readFromNBT   values()[nbt] clamped
  *   bladeevent  EntitySpinningBlade.onImpact    isShearable / destroyBlock -> VoltzMPS
  *
  * Blink Drive teleports to the raw ray hit point without checking the player fits there,
@@ -29,6 +30,7 @@ public class PatchMPS {
     static final String BLINK_CLASS = "net/machinemuse/powersuits/powermodule/movement/BlinkDriveModule";
     static final String LUX_CLASS   = "net/machinemuse/powersuits/entity/EntityLuxCapacitor";
     static final String BLADE_CLASS = "net/machinemuse/powersuits/entity/EntitySpinningBlade";
+    static final String LUX_TILE    = "net/machinemuse/powersuits/block/TileEntityLuxCapacitor";
     static final String WORLD       = "net/minecraft/world/World";
     static final String SHEARABLE   = "net/minecraftforge/common/IShearable";
     static final String OBJ         = "Ljava/lang/Object;";
@@ -38,13 +40,14 @@ public class PatchMPS {
     static final String TELEPORT_DESC =
             "(Lnet/minecraft/entity/player/EntityPlayer;Lnet/minecraft/util/MovingObjectPosition;)V";
 
-    static boolean doBlink, doLux, doBlade;
+    static boolean doBlink, doLux, doBlade, doEnum;
     static int blinkHits, luxPlaceHits, luxTileHits, shearHits, destroyHits;
+    static final int[] enumHits = new int[1];
 
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
             System.err.println("usage: PatchMPS <in.jar> <out.jar> <patches> <VoltzMPS.class>");
-            System.err.println("patches: blink,luxevent,bladeevent");
+            System.err.println("patches: blink,luxevent,bladeevent,enumclamp");
             System.exit(2);
         }
         for (String p : args[2].split(",")) {
@@ -52,6 +55,7 @@ public class PatchMPS {
             if (p.equals("blink")) doBlink = true;
             else if (p.equals("luxevent")) doLux = true;
             else if (p.equals("bladeevent")) doBlade = true;
+            else if (p.equals("enumclamp")) doEnum = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -65,6 +69,7 @@ public class PatchMPS {
             if (doBlink && n.equals(BLINK_CLASS + ".class")) d = patchBlink(d);
             if (doLux && n.equals(LUX_CLASS + ".class")) d = patchLux(d);
             if (doBlade && n.equals(BLADE_CLASS + ".class")) d = patchBlade(d);
+            if (doEnum && n.equals(LUX_TILE + ".class")) d = patchEnumClamp(d, "func_70307_a", HELPER, enumHits);
             out.put(n, d);
         }
         zf.close();
@@ -75,6 +80,8 @@ public class PatchMPS {
         if (doLux && (luxPlaceHits != 1 || luxTileHits != 1))
             throw new IllegalStateException("luxevent: expected 1 setBlock and 1 setBlockTileEntity, found "
                     + luxPlaceHits + "/" + luxTileHits);
+        if (doEnum && enumHits[0] != 1)
+            throw new IllegalStateException("enumclamp: expected 1 ForgeDirection values() index, found " + enumHits[0]);
         if (doBlade && (shearHits != 1 || destroyHits != 1))
             throw new IllegalStateException("bladeevent: expected 1 block-branch isShearable and 1 destroyBlock, found "
                     + shearHits + "/" + destroyHits);
@@ -219,6 +226,43 @@ public class PatchMPS {
         if (i instanceof FieldInsnNode) return op == Opcodes.GETFIELD ? 0 : 1;   // GETFIELD swaps
         if (i instanceof MethodInsnNode || i instanceof TypeInsnNode) return 0;  // net zero or handled
         return 0;
+    }
+
+
+    /**
+     * enumclamp: rewrites `SomeEnum.values()[index]` to go through the helper, so an
+     * out-of-range ordinal from NBT or block metadata falls back to the first constant
+     * instead of throwing out of chunk loading and failing that chunk for good.
+     *
+     * The shape is always `INVOKESTATIC values() / <push index> / AALOAD`; the element type
+     * for the cast is read back out of the values() descriptor, so this needs no hard-coded
+     * enum names.
+     */
+    static byte[] patchEnumClamp(byte[] in, String method, String helper, int[] count) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals(method)) continue;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.AALOAD) continue;
+                MethodInsnNode values = null;
+                for (AbstractInsnNode b = i.getPrevious(); b != null && values == null; b = b.getPrevious()) {
+                    if (b.getOpcode() == Opcodes.INVOKESTATIC && ((MethodInsnNode) b).name.equals("values")) {
+                        values = (MethodInsnNode) b;
+                    } else if (b.getOpcode() == Opcodes.AALOAD) {
+                        break;
+                    }
+                }
+                if (values == null) continue;
+                Type element = Type.getReturnType(values.desc).getElementType();
+                MethodInsnNode call = new MethodInsnNode(Opcodes.INVOKESTATIC, helper, "enumAt",
+                        "([Ljava/lang/Object;I)Ljava/lang/Object;", false);
+                m.instructions.set(i, call);
+                m.instructions.insert(call, new TypeInsnNode(Opcodes.CHECKCAST, element.getInternalName()));
+                count[0]++;
+            }
+        }
+        return write(cn);
     }
 
     static ClassNode read(byte[] b) {

@@ -116,19 +116,19 @@ patch_one "MPS Addons"     "$MPSA_SRC" "MPSA-0.2.3-144_MPS-531+-patched.jar" \
 
 patch_one "MFFS"           "$MFFS_SRC" "MFFS_v3.1.0.175-patched.jar" \
           PatchMFFS.java build/cls/mffs/VoltzMFFS.class \
-          "mergedupe,stabilizedupe"
+          "mergedupe,stabilizedupe,enumclamp"
 
 patch_one "Mekanism"       "$MEK_SRC"  "Mekanism-v5.5.6.bugfix1-patched.jar" \
           PatchMek.java  "build/cls/mekanism/common/VoltzMekanism.class build/cls/mekanism/common/VoltzTimeItems.class" \
-          "chestcrash,chestdupe,chestremote,machinedupe,robitdupe,tntdupe,tntsource,timeitems,aebridge,cablereload,pumpnodes"
+          "chestcrash,chestdupe,chestremote,machinedupe,robitdupe,tntdupe,tntsource,timeitems,aebridge,cablereload,pumpnodes,enumclamp"
 
 patch_one "ICBM Explosion" "$ICBM_SRC" "ICBM_Explosion_v1.2.1.172-patched.jar" \
           PatchICBM.java build/cls/icbm/zhapin/VoltzICBM.class \
-          "redmatter,sonic,remote,explosivetype,empradius,launchertier,multiblock,cruiselauncher,designator,defuser,missilestack,listeners,radarradius,radargun,chunkload"
+          "redmatter,sonic,remote,explosivetype,empradius,launchertier,multiblock,cruiselauncher,designator,defuser,missilestack,listeners,radarradius,radargun,chunkload,enumclamp"
 
 patch_one "Modular Powersuits" "$MPS_SRC" "ModularPowersuits-0.7.0-534-patched.jar" \
           PatchMPS.java  build/cls/net/machinemuse/powersuits/VoltzMPS.class \
-          "blink,luxevent,bladeevent"
+          "blink,luxevent,bladeevent,enumclamp"
 
 patch_one "ICBM Sentry"    "$ICBMS_SRC" "ICBM_Sentry_v1.2.1.172-patched.jar" \
           PatchICBMSentry.java build/cls/icbm/gangshao/VoltzSentry.class \

@@ -45,6 +45,7 @@ public class PatchMek {
     static final String TIME         = C + "VoltzTimeItems";
     static final String TE_CUBE      = C + "TileEntityEnergyCube";
     static final String TE_PUMP      = C + "TileEntityElectricPump";
+    static final String MACHINE_TYPE = C + "BlockMachine$MachineType";
     static final String CABLE_UTILS  = C + "CableUtils";
     static final String OBJECT3D     = "mekanism/api/Object3D";
     static final String ENERGY_NET   = C + "EnergyNetwork";
@@ -77,7 +78,7 @@ public class PatchMek {
         }
         List<String> known = Arrays.asList("chestcrash", "chestdupe", "chestremote", "machinedupe",
                 "robitdupe", "tntdupe", "tntsource", "timeitems", "aebridge", "cablereload",
-                "pumpnodes");
+                "pumpnodes", "enumclamp");
         for (String p : args[2].split(",")) {
             p = p.trim();
             if (!known.contains(p)) throw new IllegalArgumentException("unknown patch: " + p);
@@ -110,6 +111,7 @@ public class PatchMek {
         sites.put("tntdupe",     new String[] { "tntdupe.drop" });
         sites.put("tntsource",   new String[] { "tntsource.exploder" });
         sites.put("pumpnodes",   new String[] { "pumpnodes.suck" });
+        sites.put("enumclamp",   new String[] { "enumclamp.machinetype" });
         sites.put("timeitems",   new String[] { "timeitems." + PKT_TIME, "timeitems." + PKT_WEATHER });
         sites.put("aebridge",    new String[] { "aebridge." + TE_CUBE + ".onUpdate",
                                                 "aebridge." + CABLE_UTILS + ".getConnectedEnergyAcceptors",
@@ -147,6 +149,13 @@ public class PatchMek {
         if (cls.equals(TNT_BLOCK) && selected.contains("tntdupe"))      return patchTntDrop(in);
         if (cls.equals(TNT_ENTITY) && selected.contains("tntsource"))   return patchTntSource(in);
         if (cls.equals(TE_PUMP) && selected.contains("pumpnodes"))       return patchPumpNodes(in);
+        if (cls.equals(MACHINE_TYPE) && selected.contains("enumclamp")) {
+            int[] n = new int[1];
+            byte[] out = patchEnumClamp(in, "getFromMetadata", FIX, n);
+            if (n[0] != 1) throw new IllegalStateException("enumclamp: expected 1 MachineType values() index, found " + n[0]);
+            applied.add("enumclamp.machinetype");
+            return out;
+        }
         if ((cls.equals(PKT_TIME) || cls.equals(PKT_WEATHER)) && selected.contains("timeitems"))
             return patchTimePacket(in, cls, cls.equals(PKT_TIME) ? 0 : 1);
         if (selected.contains("aebridge")
@@ -772,6 +781,43 @@ public class PatchMek {
      * by type inference when there is no StackMapTable, and the inserted jumps never have
      * to be described by a stale one.
      */
+
+    /**
+     * enumclamp: rewrites `SomeEnum.values()[index]` to go through the helper, so an
+     * out-of-range ordinal from NBT or block metadata falls back to the first constant
+     * instead of throwing out of chunk loading and failing that chunk for good.
+     *
+     * The shape is always `INVOKESTATIC values() / <push index> / AALOAD`; the element type
+     * for the cast is read back out of the values() descriptor, so this needs no hard-coded
+     * enum names.
+     */
+    static byte[] patchEnumClamp(byte[] in, String method, String helper, int[] count) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals(method)) continue;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.AALOAD) continue;
+                MethodInsnNode values = null;
+                for (AbstractInsnNode b = i.getPrevious(); b != null && values == null; b = b.getPrevious()) {
+                    if (b.getOpcode() == Opcodes.INVOKESTATIC && ((MethodInsnNode) b).name.equals("values")) {
+                        values = (MethodInsnNode) b;
+                    } else if (b.getOpcode() == Opcodes.AALOAD) {
+                        break;
+                    }
+                }
+                if (values == null) continue;
+                Type element = Type.getReturnType(values.desc).getElementType();
+                MethodInsnNode call = new MethodInsnNode(Opcodes.INVOKESTATIC, helper, "enumAt",
+                        "([Ljava/lang/Object;I)Ljava/lang/Object;", false);
+                m.instructions.set(i, call);
+                m.instructions.insert(call, new TypeInsnNode(Opcodes.CHECKCAST, element.getInternalName()));
+                count[0]++;
+            }
+        }
+        return write(cn);
+    }
+
     static ClassNode read(byte[] b) {
         ClassNode cn = new ClassNode();
         new ClassReader(b).accept(cn, ClassReader.SKIP_FRAMES);

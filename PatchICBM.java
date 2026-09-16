@@ -30,6 +30,7 @@ import java.util.zip.*;
  *                                         GUI listener sets: joined within reach, pruned every tick loop
  *   radarradius TLeiDaTai                  every alarm/safety radius write clamped to 0..500
  *   radargun    ZhaPinPacketGuanLi         radar gun packet needs the gun's 1,000 J
+ *   enumclamp     EDaoDan.readEntityFromNBT   values()[nbt] clamped
  *   chunkload   ZhaPinPacketGuanLi         onPacketData drops a tile packet aimed at an unloaded chunk
  *
  * Red matter's doBaoZha returns true unconditionally, so the black hole never ends. It is
@@ -60,6 +61,7 @@ public class PatchICBM {
     static final String REMOTE     = "icbm/zhapin/dianqi/ItYaoKong";
     static final String ELECTRIC   = "universalelectricity/core/item/ItemElectric";
     static final String CFG_CLASS  = "icbm/zhapin/VoltzICBM";
+    static final String MISSILE    = "icbm/zhapin/daodan/EDaoDan";
     static final String EMP_CLASS     = "icbm/zhapin/jiqi/TDianCiQi";
     static final String LAUNCH_BASE   = "icbm/zhapin/jiqi/TFaSheDi";
     static final String LAUNCH_FRAME  = "icbm/zhapin/jiqi/TFaSheJia";
@@ -89,6 +91,8 @@ public class PatchICBM {
     static final int L_CALLCOUNT = 5;
 
     static boolean doRed, doSonic, doRemote, doType, doEmp, doLauncher;
+    static boolean doEnumClamp;
+    static final int[] enumHits = new int[1];
     static boolean doMulti, doCruise, doDesignator, doDefuser, doMissile;
     static boolean hitCruise, hitDesignator, hitDefuser;
     static boolean doListeners, doRadarRadius, doRadarGun, hitRadarRadius, hitRadarGun;
@@ -124,6 +128,7 @@ public class PatchICBM {
             else if (p.equals("radarradius")) doRadarRadius = true;
             else if (p.equals("radargun")) doRadarGun = true;
             else if (p.equals("chunkload")) doChunkLoad = true;
+            else if (p.equals("enumclamp")) doEnumClamp = true;
             else throw new IllegalArgumentException("unknown patch: " + p);
         }
 
@@ -134,6 +139,8 @@ public class PatchICBM {
             if (ze.isDirectory()) { out.put(ze.getName(), null); continue; }
             byte[] d = readAll(zf.getInputStream(ze));
             String n = ze.getName();
+            if (doEnumClamp && n.equals(MISSILE + ".class"))
+                d = patchEnumClamp(d, "func_70037_a", CFG_CLASS, enumHits);
             if (doRed && n.equals(RED_CLASS + ".class"))    d = patchRedMatter(d);
             if (doSonic && n.equals(SONIC + ".class"))      d = patchSonic(d, SONIC);
             if (doSonic && n.equals(HYPERSONIC + ".class")) d = patchSonic(d, HYPERSONIC);
@@ -186,6 +193,9 @@ public class PatchICBM {
         if (doRadarGun && !hitRadarGun) throw new IllegalStateException("radargun patch did not apply");
         if (doChunkLoad && !hitChunkLoad) throw new IllegalStateException("chunkload patch did not apply");
         if (!hitInit) throw new IllegalStateException("config init hook did not apply");
+
+        if (doEnumClamp && enumHits[0] != 1)
+            throw new IllegalStateException("enumclamp: expected 1 XingShi values() index, found " + enumHits[0]);
 
         ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(args[1])));
         for (Map.Entry<String, byte[]> en : out.entrySet()) {
@@ -861,6 +871,43 @@ public class PatchICBM {
      * by type inference when there is no StackMapTable, and the inserted jumps never have
      * to be described by a stale one.
      */
+
+    /**
+     * enumclamp: rewrites `SomeEnum.values()[index]` to go through the helper, so an
+     * out-of-range ordinal from NBT or block metadata falls back to the first constant
+     * instead of throwing out of chunk loading and failing that chunk for good.
+     *
+     * The shape is always `INVOKESTATIC values() / <push index> / AALOAD`; the element type
+     * for the cast is read back out of the values() descriptor, so this needs no hard-coded
+     * enum names.
+     */
+    static byte[] patchEnumClamp(byte[] in, String method, String helper, int[] count) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals(method)) continue;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i.getOpcode() != Opcodes.AALOAD) continue;
+                MethodInsnNode values = null;
+                for (AbstractInsnNode b = i.getPrevious(); b != null && values == null; b = b.getPrevious()) {
+                    if (b.getOpcode() == Opcodes.INVOKESTATIC && ((MethodInsnNode) b).name.equals("values")) {
+                        values = (MethodInsnNode) b;
+                    } else if (b.getOpcode() == Opcodes.AALOAD) {
+                        break;
+                    }
+                }
+                if (values == null) continue;
+                Type element = Type.getReturnType(values.desc).getElementType();
+                MethodInsnNode call = new MethodInsnNode(Opcodes.INVOKESTATIC, helper, "enumAt",
+                        "([Ljava/lang/Object;I)Ljava/lang/Object;", false);
+                m.instructions.set(i, call);
+                m.instructions.insert(call, new TypeInsnNode(Opcodes.CHECKCAST, element.getInternalName()));
+                count[0]++;
+            }
+        }
+        return write(cn);
+    }
+
     static ClassNode read(byte[] b) {
         ClassNode cn = new ClassNode();
         new ClassReader(b).accept(cn, ClassReader.SKIP_FRAMES);
