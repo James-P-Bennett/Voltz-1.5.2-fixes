@@ -14,7 +14,7 @@ import java.util.Set;
 import java.util.WeakHashMap;
 
 /**
- * BalancedMFFS - zone flags and admin logging for MFFS interdiction matrices.
+ * BalancedMFFS - zone flags and admin logging for MFFS interdiction matrixes.
  *
  * Injected into the MFFS jar by PatchMFFS. Two jobs:
  *
@@ -46,7 +46,7 @@ public class BalancedMFFS {
     private static long lastStamp = -1L;
     private static long lastCheck = 0L;
 
-    /** matrices already announced; a TileEntity is rebuilt on chunk load, so this is per load */
+    /** matrixes already announced; a TileEntity is rebuilt on chunk load, so this is per load */
     private static final Map seenMatrices = Collections.synchronizedMap(new WeakHashMap());
     private static final Map fieldCache = new HashMap();
 
@@ -302,7 +302,7 @@ public class BalancedMFFS {
 
     private static void writeTemplate(File file) throws Exception {
         java.io.PrintWriter out = new java.io.PrintWriter(file);
-        out.println("# BalancedMFFS - zone flags and admin logging for MFFS interdiction matrices");
+        out.println("# BalancedMFFS - zone flags and admin logging for MFFS interdiction matrixes");
         out.println("#");
         out.println("# Modules denied here do nothing to entities inside the area, so they can stay");
         out.println("# craftable instead of being banned outright.");
