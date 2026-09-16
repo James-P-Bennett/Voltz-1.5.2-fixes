@@ -5,7 +5,8 @@
 #   ./build.sh <AS.jar>        override just the Atomic Science source jar
 #
 # Override any path with an env var:
-#   MODS  AS_SRC  MPSA_SRC  MFFS_SRC  MEK_SRC  ICBM_SRC  ICBMS_SRC  ICBMC_SRC  MPS_SRC  MFR_SRC  FORGE  ASM  JAVAC8
+#   MODS  AS_SRC  MPSA_SRC  MFFS_SRC  MEK_SRC  MEKGEN_SRC  ICBM_SRC  ICBMS_SRC  ICBMC_SRC  MPS_SRC
+#   MFR_SRC  GC_SRC  COREMODS  MICRO_SRC  ICORE_SRC  NEI_SRC  FORGE  ASM  JAVAC8
 #
 # Helper classes are compiled against the Forge universal zip, NOT against the launcher's
 # bin/minecraft.jar - PolyMC rewrites that file on every launch, so a build depending on it
@@ -23,7 +24,12 @@ ICBMS_SRC="${ICBMS_SRC:-$MODS/ICBM_Sentry_v1.2.1.172.jar}"
 ICBMC_SRC="${ICBMC_SRC:-$MODS/ICBM_Contraption_v1.2.1.172.jar}"
 MPS_SRC="${MPS_SRC:-$MODS/ModularPowersuits-0.7.0-534.jar}"
 MFR_SRC="${MFR_SRC:-$MODS/MineFactoryReloaded-2.6.4-975.jar}"
-GC_SRC="${GC_SRC:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/coremods/Galacticraft-1.5.2-a0.1.36.410.jar}"
+MEKGEN_SRC="${MEKGEN_SRC:-$MODS/MekanismGenerators-v5.5.6.bugfix1.jar}"
+COREMODS="${COREMODS:-$HOME/.local/share/PolyMC/instances/Voltz/.minecraft/coremods}"
+GC_SRC="${GC_SRC:-$COREMODS/Galacticraft-1.5.2-a0.1.36.410.jar}"
+MICRO_SRC="${MICRO_SRC:-$COREMODS/immibis-microblocks-55.0.7.jar}"
+ICORE_SRC="${ICORE_SRC:-$MODS/immibis-core-55.1.6.jar}"
+NEI_SRC="${NEI_SRC:-$COREMODS/NotEnoughItems 1.5.2.28.jar}"
 
 ASM="${ASM:-$HOME/.local/share/PolyMC/libraries/org/ow2/asm/asm-all/5.0.3/asm-all-5.0.3.jar}"
 JAVAC8="${JAVAC8:-/usr/lib/jvm/java-8-openjdk/bin/javac}"
@@ -80,6 +86,9 @@ compile8 src/icbm/wanyi/VoltzContraption.java
 compile8 src/net/machinemuse/powersuits/VoltzMPS.java
 compile8 src/powercrystals/minefactoryreloaded/VoltzMFR.java
 compile8 src/micdoodle8/mods/galacticraft/core/VoltzGC.java
+compile8 src/mekanism/generators/common/VoltzMekGen.java
+compile8 src/mods/immibis/core/api/multipart/util/VoltzMicro.java
+compile8 src/codechicken/nei/VoltzNEI.java
 
 for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
          build/cls/micdoodle8/mods/galacticraft/core/VoltzGC.class \
@@ -91,7 +100,10 @@ for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
          build/cls/icbm/gangshao/VoltzSentry.class \
          build/cls/icbm/wanyi/VoltzContraption.class \
          build/cls/net/machinemuse/powersuits/VoltzMPS.class \
-         build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class; do
+         build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class \
+         build/cls/mekanism/generators/common/VoltzMekGen.class \
+         build/cls/mods/immibis/core/api/multipart/util/VoltzMicro.class \
+         build/cls/codechicken/nei/VoltzNEI.class; do
   [ -f "$f" ] || { echo "helper class missing after compile: $f" >&2; exit 1; }
 done
 
@@ -127,11 +139,29 @@ patch_one "ICBM Contraption" "$ICBMC_SRC" "ICBM_Contraption_v1.2.1.172-patched.j
 
 patch_one "MineFactoryReloaded" "$MFR_SRC" "MineFactoryReloaded-2.6.4-975-patched.jar" \
           PatchMFR.java  build/cls/powercrystals/minefactoryreloaded/VoltzMFR.class \
-          "ghostslot"
+          "ghostslot,pkttile,harvester,dsuside,rednet,guidupe,routerloop,dsunbt"
+
+patch_one "MekanismGenerators" "$MEKGEN_SRC" "MekanismGenerators-v5.5.6.bugfix1-patched.jar" \
+          PatchMekGen.java build/cls/mekanism/generators/common/VoltzMekGen.class \
+          "solarspace,boundclear,metaclamp,particlepkt"
 
 patch_one "Galacticraft" "$GC_SRC" "Galacticraft-1.5.2-a0.1.36.410-patched.jar" \
           PatchGC.java   build/cls/micdoodle8/mods/galacticraft/core/VoltzGC.class \
           "dimauth,station,reach,rider,guis,nbtclamp,uechunk"
+
+# Both immibis jars ship the same BlockMultipartBase and either copy can win the class load,
+# so both are patched; only the microblocks jar carries the placement packet.
+patch_one "immibis microblocks" "$MICRO_SRC" "immibis-microblocks-55.0.7-patched.jar" \
+          PatchMicro.java build/cls/mods/immibis/core/api/multipart/util/VoltzMicro.class \
+          "dropstatic,placereach"
+
+patch_one "immibis core"       "$ICORE_SRC" "immibis-core-55.1.6-patched.jar" \
+          PatchMicro.java build/cls/mods/immibis/core/api/multipart/util/VoltzMicro.class \
+          "dropstatic,placereach"
+
+patch_one "NotEnoughItems"     "$NEI_SRC"   "NotEnoughItems 1.5.2.28-patched.jar" \
+          PatchNEI.java   build/cls/codechicken/nei/VoltzNEI.class \
+          "auth"
 
 # VoltzLoginGuard: a coremod (not a mod patch) - the FML login-sequence crash guard. Compiled
 # against ASM (using only the 4-arg MethodInsnNode, which FML 1.5.2's ASM 4.1 also has) and the
