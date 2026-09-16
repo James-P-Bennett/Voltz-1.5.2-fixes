@@ -20,9 +20,11 @@ import java.util.zip.*;
  *                CommonProxy.getServerGui   client-sent Robit id must be a Robit in reach
  *   tntdupe      BlockObsidianTNT.onBlockDestroyedByPlayer   no second drop on top of the harvest drop
  *   tntsource    EntityObsidianTNT.explode  pass itself as the exploder, as vanilla TNT does
- *   timeitems    PacketTime / PacketWeather.read   routed through BalancedTimeItems
+ *   timeitems    PacketTime / PacketWeather.read   the sender must be holding the real
+ *                item, fully recharged, and send a value the GUI can produce (VoltzTimeItems).
+ *                The optional BalancedMekanismTimeItems mod adds the server policy on top.
  *
- * usage: PatchMek <in.jar> <out.jar> <patch>[,<patch>...] <VoltzMekanism.class> <BalancedTimeItems.class>
+ * usage: PatchMek <in.jar> <out.jar> <patch>[,<patch>...] <VoltzMekanism.class> <VoltzTimeItems.class>
  */
 public class PatchMek {
 
@@ -39,9 +41,8 @@ public class PatchMek {
     static final String TNT_ENTITY   = C + "EntityObsidianTNT";
     static final String PKT_TIME     = C + "network/PacketTime";
     static final String PKT_WEATHER  = C + "network/PacketWeather";
-    static final String MAIN         = C + "Mekanism";
     static final String FIX          = C + "VoltzMekanism";
-    static final String TIME         = C + "BalancedTimeItems";
+    static final String TIME         = C + "VoltzTimeItems";
     static final String TE_CUBE      = C + "TileEntityEnergyCube";
     static final String CABLE_UTILS  = C + "CableUtils";
     static final String ENERGY_NET   = C + "EnergyNetwork";
@@ -68,7 +69,7 @@ public class PatchMek {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 5) {
-            System.err.println("usage: PatchMek <in.jar> <out.jar> <patches> <VoltzMekanism.class> <BalancedTimeItems.class>");
+            System.err.println("usage: PatchMek <in.jar> <out.jar> <patches> <VoltzMekanism.class> <VoltzTimeItems.class>");
             System.err.println("patches: chestcrash,chestdupe,chestremote,machinedupe,robitdupe,tntdupe,tntsource,timeitems");
             System.exit(2);
         }
@@ -105,7 +106,7 @@ public class PatchMek {
         sites.put("robitdupe",   new String[] { "robitdupe.containers", "robitdupe.proxy" });
         sites.put("tntdupe",     new String[] { "tntdupe.drop" });
         sites.put("tntsource",   new String[] { "tntsource.exploder" });
-        sites.put("timeitems",   new String[] { "timeitems." + PKT_TIME, "timeitems." + PKT_WEATHER, "timeitems.init" });
+        sites.put("timeitems",   new String[] { "timeitems." + PKT_TIME, "timeitems." + PKT_WEATHER });
         sites.put("aebridge",    new String[] { "aebridge." + TE_CUBE + ".onUpdate",
                                                 "aebridge." + CABLE_UTILS + ".getConnectedEnergyAcceptors",
                                                 "aebridge." + ENERGY_NET + ".getEnergyAcceptors",
@@ -143,7 +144,6 @@ public class PatchMek {
         if (cls.equals(TNT_ENTITY) && selected.contains("tntsource"))   return patchTntSource(in);
         if ((cls.equals(PKT_TIME) || cls.equals(PKT_WEATHER)) && selected.contains("timeitems"))
             return patchTimePacket(in, cls, cls.equals(PKT_TIME) ? 0 : 1);
-        if (cls.equals(MAIN) && selected.contains("timeitems"))         return patchInitHook(in);
         if (selected.contains("aebridge")
                 && (cls.equals(TE_CUBE) || cls.equals(CABLE_UTILS) || cls.equals(ENERGY_NET)))
             in = patchAeBridge(in, cls);
@@ -558,10 +558,11 @@ public class PatchMek {
      * timeitems: read(stream, player, world) becomes
      *
      *     int v = stream.readInt();
-     *     if (!BalancedTimeItems.use(player, world, v, kind)) return;
+     *     if (!VoltzTimeItems.use(player, world, v, kind)) return;
      *     <stock body, minus its damageItem(4999) call, with its readInt() replaced by v>
      *
-     * BalancedTimeItems sets the item's damage itself, from the configured cooldown.
+     * VoltzTimeItems applies the damage itself, so that the optional feature mod can set it
+     * from a configured cooldown instead of the stock 4999.
      */
     static byte[] patchTimePacket(byte[] in, String cls, int kind) {
         ClassNode cn = read(in);
@@ -620,19 +621,6 @@ public class PatchMek {
             m.instructions.insert(g);
             m.maxStack = Math.max(m.maxStack, 5);
             applied.add("timeitems." + cls);
-        }
-        return write(cn);
-    }
-
-    /** Load config/BalancedTimeItems.cfg at startup by calling init() from Mekanism.preInit. */
-    static byte[] patchInitHook(byte[] in) {
-        ClassNode cn = read(in);
-        for (Object mo : cn.methods) {
-            MethodNode m = (MethodNode) mo;
-            if (!m.name.equals("preInit")) continue;
-            m.instructions.insert(new MethodInsnNode(Opcodes.INVOKESTATIC, TIME, "init", "()V", false));
-            m.maxStack = Math.max(m.maxStack, 1);
-            applied.add("timeitems.init");
         }
         return write(cn);
     }

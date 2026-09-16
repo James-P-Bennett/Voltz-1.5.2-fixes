@@ -1,4 +1,4 @@
-package mekanism.common;
+package voltz.timeitems;
 
 import net.minecraftforge.common.Configuration;
 import java.io.File;
@@ -7,20 +7,19 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * BalancedTimeItems - server-side control of the Mekanism Stopwatch and Weather Orb.
+ * BalancedTimeItems - server policy for the Mekanism Stopwatch and Weather Orb.
  *
- * Injected into Mekanism 5.5.6 by PatchMek and called at the top of PacketTime.read and
- * PacketWeather.read, before the stock code touches the world.
- *
- * Stock trusts those packets completely: it damages whatever the sender is holding and
- * changes the time or weather, so any client can do it at will without owning either
- * item. Now the sender must hold the real item, fully recharged, and then the configured
- * mode decides what happens:
+ * This is the feature half, and it ships as its own mod: the exploit fix lives in the patched
+ * Mekanism jar (mekanism.common.VoltzTimeItems) and stands on its own. That fix has already
+ * established, before policy() is called, that the sender really is holding the real item and
+ * that it is fully recharged. What is left is the server's choice of what the items do:
  *
  *   allow     stock behaviour, with a configurable cooldown
  *   disable   nothing happens; the player is told the item is disabled
  *   command   the change is cancelled and a command runs as the player instead,
  *             e.g. a vote plugin's /voteday
+ *
+ * Remove this mod and the Stopwatch and Weather Orb behave as stock, still exploit-proof.
  *
  * Minecraft objects arrive as Object and are handled reflectively on SRG names.
  */
@@ -36,7 +35,6 @@ public class BalancedTimeItems {
 
     private static final String[] NAMES = { "Stopwatch", "Weather Orb" };
     private static final String[] CATEGORIES = { "stopwatch", "weather orb" };
-    private static final String[] ITEM_FIELDS = { "Stopwatch", "WeatherOrb" };
 
     /** GUI button order; the packet sends hour 0/6/12/18 or weather ordinal 0-3 */
     private static final String[][] OPTIONS = {
@@ -52,9 +50,7 @@ public class BalancedTimeItems {
     private static final int[] cooldownSeconds = { 250, 250 };
     private static final String[][] commands = new String[2][4];
 
-    private static final long LOG_INTERVAL_MS = 10000L;
     private static final Map lastUse = new HashMap();
-    private static final Map lastLog = new HashMap();
     private static final Map methodCache = new HashMap();
 
     private static boolean loaded = false;
@@ -115,23 +111,19 @@ public class BalancedTimeItems {
     }
 
     /**
-     * Prepended to PacketTime.read (kind STOPWATCH, value = hour) and PacketWeather.read
-     * (kind WEATHER_ORB, value = weather ordinal). The patch reads the int from the packet
-     * first and hands it to the stock code afterwards.
+     * Called by mekanism.common.VoltzTimeItems once it has established that the sender is
+     * holding the real item, fully recharged, and sent a value the GUI can actually produce.
      *
      * @return true to let the stock time or weather change run
      */
-    public static synchronized boolean use(Object player, Object world, int value, int kind) {
+    public static synchronized boolean policy(Object player, Object world, int value, int kind) {
         init();
         String name = playerName(player);
         String item = NAMES[kind];
         try {
             int option = option(kind, value);
             Object held = call(player, "func_71045_bC", new Object[0]);               // getCurrentEquippedItem
-            if (held == null || option < 0
-                    || call(held, "func_77973_b", new Object[0]) != itemFor(kind)) {  // ItemStack.getItem
-                logLimited(name, "refused " + item + " packet from " + name
-                        + " (not holding one, or bad value " + value + ")");
+            if (held == null || option < 0) {
                 return false;
             }
             if (mode[kind].equals("disable")) {
@@ -141,10 +133,6 @@ public class BalancedTimeItems {
             String command = commands[kind][option];
             if (mode[kind].equals("command") && command.length() == 0) {
                 tell(player, OPTIONS[kind][option] + " is not available on this server.");
-                return false;
-            }
-            if (((Integer) call(held, "func_77960_j", new Object[0])).intValue() != 0) {   // getItemDamage
-                tell(player, "The " + item + " is still recharging.");
                 return false;
             }
 
@@ -186,10 +174,6 @@ public class BalancedTimeItems {
             case 18: return 3;
             default: return -1;
         }
-    }
-
-    private static Object itemFor(int kind) throws Exception {
-        return Class.forName("mekanism.common.Mekanism").getField(ITEM_FIELDS[kind]).get(null);
     }
 
     /**
@@ -240,16 +224,6 @@ public class BalancedTimeItems {
         } catch (Throwable t) {
             return "?";
         }
-    }
-
-    private static void logLimited(String name, String message) {
-        long now = System.currentTimeMillis();
-        Long last = (Long) lastLog.get(name);
-        if (last != null && now - last.longValue() < LOG_INTERVAL_MS) {
-            return;
-        }
-        lastLog.put(name, Long.valueOf(now));
-        System.out.println(TAG + message);
     }
 
     private static Object call(Object o, String name, Object[] args) throws Exception {

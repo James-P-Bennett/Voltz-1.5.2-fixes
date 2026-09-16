@@ -79,7 +79,7 @@ compile8 src/atomicscience/fanwusu/VoltzFixConfig.java
 compile8 src/andrew/powersuits/VoltzMagnetConfig.java
 compile8 src/mffs/VoltzMFFS.java
 compile8 src/mekanism/common/VoltzMekanism.java
-compile8 src/mekanism/common/BalancedTimeItems.java
+compile8 src/mekanism/common/VoltzTimeItems.java
 compile8 src/icbm/zhapin/VoltzICBM.java
 compile8 src/icbm/gangshao/VoltzSentry.java
 compile8 src/icbm/wanyi/VoltzContraption.java
@@ -95,7 +95,7 @@ for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
          build/cls/andrew/powersuits/VoltzMagnetConfig.class \
          build/cls/mffs/VoltzMFFS.class \
          build/cls/mekanism/common/VoltzMekanism.class \
-         build/cls/mekanism/common/BalancedTimeItems.class \
+         build/cls/mekanism/common/VoltzTimeItems.class \
          build/cls/icbm/zhapin/VoltzICBM.class \
          build/cls/icbm/gangshao/VoltzSentry.class \
          build/cls/icbm/wanyi/VoltzContraption.class \
@@ -119,7 +119,7 @@ patch_one "MFFS"           "$MFFS_SRC" "MFFS_v3.1.0.175-patched.jar" \
           "mergedupe,stabilizedupe"
 
 patch_one "Mekanism"       "$MEK_SRC"  "Mekanism-v5.5.6.bugfix1-patched.jar" \
-          PatchMek.java  "build/cls/mekanism/common/VoltzMekanism.class build/cls/mekanism/common/BalancedTimeItems.class" \
+          PatchMek.java  "build/cls/mekanism/common/VoltzMekanism.class build/cls/mekanism/common/VoltzTimeItems.class" \
           "chestcrash,chestdupe,chestremote,machinedupe,robitdupe,tntdupe,tntsource,timeitems,aebridge,cablereload"
 
 patch_one "ICBM Explosion" "$ICBM_SRC" "ICBM_Explosion_v1.2.1.172-patched.jar" \
@@ -163,6 +163,20 @@ patch_one "immibis core"       "$ICORE_SRC" "immibis-core-55.1.6-patched.jar" \
 patch_one "NotEnoughItems"     "$NEI_SRC"   "NotEnoughItems 1.5.2.28-patched.jar" \
           PatchNEI.java   build/cls/codechicken/nei/VoltzNEI.class \
           "auth"
+
+# BalancedMekanismTimeItems: the optional Stopwatch / Weather Orb server policy. A feature, so
+# it ships separately from the patched Mekanism jar, which carries the exploit fix on its own.
+# It transforms nothing, so it is an ordinary mod: drop the jar in a server's mods/.
+echo "building BalancedMekanismTimeItems mod"
+rm -rf build/bti && mkdir -p build/bti
+"$JAVAC8" -nowarn -source 1.6 -target 1.6 -bootclasspath "$(dirname "$JAVAC8")/../jre/lib/rt.jar" \
+    -cp "$FORGE" -d build/bti \
+    src/voltz/timeitems/BalancedTimeItems.java src/voltz/timeitems/BalancedMekanismTimeItems.java 2>&1 \
+    | grep -vE 'bootstrap class path|source value 1\.6|target value 1\.6|options|deprecat' || true
+[ -f build/bti/voltz/timeitems/BalancedMekanismTimeItems.class ] \
+    || { echo "BalancedMekanismTimeItems did not compile" >&2; exit 1; }
+( cd build/bti && jar cf "$OLDPWD/BalancedMekanismTimeItems.jar" voltz )
+echo "OK  wrote BalancedMekanismTimeItems.jar  [Stopwatch / Weather Orb policy mod]"
 
 # BalancedMFFS: a coremod, not a mod patch - the zone-flag and admin-logging feature. It is a
 # feature rather than a bug fix, so it ships separately from MFFS_v3.1.0.175-patched.jar and a
