@@ -315,6 +315,84 @@ public class VoltzMekanism {
         }
     }
 
+    // ------------------------------------------------------------ Electric Pump
+
+    /**
+     * Inserted at the head of TileEntityElectricPump.suck's "this remembered node is not a
+     * liquid source" path, and skips the node entirely when it returns false.
+     *
+     * Stock treats a node that is not a source block *right now* as exhausted, and immediately
+     * either spreads to one of its neighbours - adding that to recurringNodes, so the pump
+     * walks outward through the pool - or drops it into cleaningNodes, where clean() then
+     * deletes the flowing water that was about to reform it. Either way the pump stops being a
+     * pump sitting on one source block and starts eating everything within 80 blocks.
+     *
+     * The window is tiny in normal running, because suck() only fires every 20 ticks and an
+     * infinite source reforms in a tick or two. A chunk reload lands squarely in it: the pump
+     * resumes on the next world-time boundary with no relation to when it last took a block,
+     * and water physics has not settled yet. That is why this shows up on unload/load and
+     * almost never otherwise.
+     *
+     * Rather than guess from timing, this asks the question vanilla itself asks: a block with
+     * two or more horizontally adjacent sources of the same liquid is going to become a source
+     * again. A node like that is an infinite source the pump should keep drawing from forever,
+     * so the node is left alone and stock's handling never runs. A node with fewer than two is
+     * genuinely being drained, and the pump spreads exactly as it always did.
+     */
+    public static boolean pumpNodeReady(Object pump, Object node) {
+        try {
+            Object world = field(pump, "field_70331_k");                   // TileEntity.worldObj
+            if (world == null) {
+                return true;
+            }
+            int x = ((Integer) field(node, "xCoord")).intValue();
+            int y = ((Integer) field(node, "yCoord")).intValue();
+            int z = ((Integer) field(node, "zCoord")).intValue();
+            int sources = 0;
+            for (int i = 0; i < 4; i++) {
+                int nx = x + (i == 0 ? 1 : i == 1 ? -1 : 0);
+                int nz = z + (i == 2 ? 1 : i == 3 ? -1 : 0);
+                if (isLiquidSource(world, nx, y, nz)) {
+                    sources++;
+                }
+            }
+            return sources < 2;
+        } catch (Throwable t) {
+            warn("pumpNodeReady", t);
+            return true;
+        }
+    }
+
+    /** Mekanism's own notion of a source block: the liquid's still form, metadata 0. */
+    private static boolean isLiquidSource(Object world, int x, int y, int z) {
+        try {
+            if (mekUtils == null) {
+                mekUtils = Class.forName("mekanism.common.MekanismUtils");
+            }
+            if (isLiquidMethod == null) {
+                Method[] ms = mekUtils.getDeclaredMethods();
+                for (int i = 0; i < ms.length; i++) {
+                    if (ms[i].getName().equals("isLiquid") && ms[i].getParameterTypes().length == 4) {
+                        isLiquidMethod = ms[i];
+                        isLiquidMethod.setAccessible(true);
+                        break;
+                    }
+                }
+            }
+            if (isLiquidMethod == null) {
+                return false;
+            }
+            return ((Boolean) isLiquidMethod.invoke(null, new Object[] { world,
+                    Integer.valueOf(x), Integer.valueOf(y), Integer.valueOf(z) })).booleanValue();
+        } catch (Throwable t) {
+            warn("isLiquidSource", t);
+            return false;
+        }
+    }
+
+    private static Class mekUtils;
+    private static Method isLiquidMethod;
+
     // ------------------------------------------------------------- reflection
 
     private static boolean isElectricChest(Object stack) throws Exception {

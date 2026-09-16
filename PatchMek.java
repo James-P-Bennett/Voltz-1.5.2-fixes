@@ -44,7 +44,9 @@ public class PatchMek {
     static final String FIX          = C + "VoltzMekanism";
     static final String TIME         = C + "VoltzTimeItems";
     static final String TE_CUBE      = C + "TileEntityEnergyCube";
+    static final String TE_PUMP      = C + "TileEntityElectricPump";
     static final String CABLE_UTILS  = C + "CableUtils";
+    static final String OBJECT3D     = "mekanism/api/Object3D";
     static final String ENERGY_NET   = C + "EnergyNetwork";
     static final String HOOKS        = C + "MekanismHooks";
     static final String[] ROBIT_CONTAINERS = {
@@ -74,7 +76,8 @@ public class PatchMek {
             System.exit(2);
         }
         List<String> known = Arrays.asList("chestcrash", "chestdupe", "chestremote", "machinedupe",
-                "robitdupe", "tntdupe", "tntsource", "timeitems", "aebridge", "cablereload");
+                "robitdupe", "tntdupe", "tntsource", "timeitems", "aebridge", "cablereload",
+                "pumpnodes");
         for (String p : args[2].split(",")) {
             p = p.trim();
             if (!known.contains(p)) throw new IllegalArgumentException("unknown patch: " + p);
@@ -106,6 +109,7 @@ public class PatchMek {
         sites.put("robitdupe",   new String[] { "robitdupe.containers", "robitdupe.proxy" });
         sites.put("tntdupe",     new String[] { "tntdupe.drop" });
         sites.put("tntsource",   new String[] { "tntsource.exploder" });
+        sites.put("pumpnodes",   new String[] { "pumpnodes.suck" });
         sites.put("timeitems",   new String[] { "timeitems." + PKT_TIME, "timeitems." + PKT_WEATHER });
         sites.put("aebridge",    new String[] { "aebridge." + TE_CUBE + ".onUpdate",
                                                 "aebridge." + CABLE_UTILS + ".getConnectedEnergyAcceptors",
@@ -142,6 +146,7 @@ public class PatchMek {
             return patchRobitContainer(in, cls);
         if (cls.equals(TNT_BLOCK) && selected.contains("tntdupe"))      return patchTntDrop(in);
         if (cls.equals(TNT_ENTITY) && selected.contains("tntsource"))   return patchTntSource(in);
+        if (cls.equals(TE_PUMP) && selected.contains("pumpnodes"))       return patchPumpNodes(in);
         if ((cls.equals(PKT_TIME) || cls.equals(PKT_WEATHER)) && selected.contains("timeitems"))
             return patchTimePacket(in, cls, cls.equals(PKT_TIME) ? 0 : 1);
         if (selected.contains("aebridge")
@@ -550,6 +555,95 @@ public class PatchMek {
             applied.add("tntsource.exploder");
         }
         return write(cn);
+    }
+
+    // --------------------------------------------------------------- pump nodes
+
+    /**
+     * pumpnodes: in suck(), the loop over the remembered recurring nodes reaches its "this
+     * node is not a liquid source" path and immediately spreads to a neighbour or retires the
+     * node. That path now starts with
+     *
+     *     if (!VoltzMekanism.pumpNodeReady(this, wrapper)) continue;
+     *
+     * so a node that is merely mid-refill is left alone until it has been dry for a few
+     * seconds. The guard goes in front of the expansion loop's ForgeDirection.VALID_DIRECTIONS
+     * and jumps to the enclosing loop's hasNext check.
+     *
+     * Landmarks, all verified unique in suck(): one Object3D.distanceTo (only the expansion
+     * loop measures distance), and one java.util.List.iterator (only the shuffled copy of
+     * recurringNodes is a List - the other two loops iterate Sets).
+     */
+    static byte[] patchPumpNodes(byte[] in) {
+        ClassNode cn = read(in);
+        for (Object mo : cn.methods) {
+            MethodNode m = (MethodNode) mo;
+            if (!m.name.equals("suck") || !m.desc.equals("(Z)Z")) continue;
+
+            MethodInsnNode distanceTo = null, listIterator = null;
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (!(i instanceof MethodInsnNode)) continue;
+                MethodInsnNode mi = (MethodInsnNode) i;
+                if (mi.name.equals("distanceTo") && mi.owner.equals(OBJECT3D)) {
+                    if (distanceTo != null) throw new IllegalStateException("pumpnodes: distanceTo is not unique");
+                    distanceTo = mi;
+                } else if (mi.getOpcode() == Opcodes.INVOKEINTERFACE
+                        && mi.owner.equals("java/util/List") && mi.name.equals("iterator")) {
+                    if (listIterator != null) throw new IllegalStateException("pumpnodes: List.iterator is not unique");
+                    listIterator = mi;
+                }
+            }
+            if (distanceTo == null || listIterator == null)
+                throw new IllegalStateException("pumpnodes: could not find the recurring-node loop");
+
+            // the node local: `wrapper.getFromSide(orientation)` just before distanceTo
+            MethodInsnNode fromSide = null;
+            for (AbstractInsnNode i = distanceTo; i != null && fromSide == null; i = i.getPrevious()) {
+                if (i instanceof MethodInsnNode && ((MethodInsnNode) i).name.equals("getFromSide"))
+                    fromSide = (MethodInsnNode) i;
+            }
+            AbstractInsnNode nodeLoad = fromSide == null ? null : prevReal(prevReal(fromSide));
+            if (nodeLoad == null || nodeLoad.getOpcode() != Opcodes.ALOAD)
+                throw new IllegalStateException("pumpnodes: could not find the node local");
+            int nodeVar = ((VarInsnNode) nodeLoad).var;
+
+            // start of the expansion loop: the VALID_DIRECTIONS read before distanceTo
+            AbstractInsnNode loopStart = null;
+            for (AbstractInsnNode i = distanceTo; i != null && loopStart == null; i = i.getPrevious()) {
+                if (i.getOpcode() == Opcodes.GETSTATIC
+                        && ((FieldInsnNode) i).name.equals("VALID_DIRECTIONS")) loopStart = i;
+            }
+            if (loopStart == null) throw new IllegalStateException("pumpnodes: could not find the expansion loop");
+
+            // continue target: the enclosing loop's hasNext, right after List.iterator
+            AbstractInsnNode hasNext = null;
+            for (AbstractInsnNode i = listIterator; i != null && hasNext == null; i = i.getNext()) {
+                if (i instanceof MethodInsnNode && ((MethodInsnNode) i).name.equals("hasNext")) hasNext = i;
+            }
+            LabelNode carryOn = null;
+            for (AbstractInsnNode i = hasNext; i != null && carryOn == null; i = i.getPrevious()) {
+                if (i instanceof LabelNode) carryOn = (LabelNode) i;
+            }
+            if (carryOn == null) throw new IllegalStateException("pumpnodes: could not find the loop head");
+
+            InsnList g = new InsnList();
+            g.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            g.add(new VarInsnNode(Opcodes.ALOAD, nodeVar));
+            g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, FIX, "pumpNodeReady",
+                    "(Ljava/lang/Object;Ljava/lang/Object;)Z", false));
+            g.add(new JumpInsnNode(Opcodes.IFEQ, carryOn));
+            m.instructions.insertBefore(loopStart, g);
+            m.maxStack = Math.max(m.maxStack, 4);
+            applied.add("pumpnodes.suck");
+        }
+        return write(cn);
+    }
+
+    /** skip labels, line numbers and frames, which sit between real instructions */
+    static AbstractInsnNode prevReal(AbstractInsnNode n) {
+        n = n.getPrevious();
+        while (n != null && n.getOpcode() < 0) n = n.getPrevious();
+        return n;
     }
 
     // -------------------------------------------------- Stopwatch / Weather Orb
