@@ -19,6 +19,7 @@ import java.util.Map;
  *
  * The fix lives in LoginGuardTransformer: the mod-packet branch returns when getPlayer() is null.
  */
+@IFMLLoadingPlugin.MCVersion("1.5.2")
 public class VoltzLoginGuard implements IFMLLoadingPlugin {
 
     public String[] getASMTransformerClass() {

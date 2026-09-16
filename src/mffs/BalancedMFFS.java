@@ -16,7 +16,8 @@ import java.util.WeakHashMap;
 /**
  * BalancedMFFS - zone flags and admin logging for MFFS interdiction matrixes.
  *
- * Injected into the MFFS jar by PatchMFFS. Two jobs:
+ * Shipped as the BalancedMFFS coremod and applied to MFFS's own classes at load time by
+ * BalancedMFFSTransformer, separately from the dupe fixes in the patched MFFS jar. Two jobs:
  *
  *  1. Zone flags. Every interdiction module acts through
  *     onDefend(IInterdictionMatrix, EntityLiving), and the base class's own body is

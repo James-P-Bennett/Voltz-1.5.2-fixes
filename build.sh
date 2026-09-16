@@ -77,7 +77,7 @@ patch_one() {
 
 compile8 src/atomicscience/fanwusu/VoltzFixConfig.java
 compile8 src/andrew/powersuits/VoltzMagnetConfig.java
-compile8 src/mffs/BalancedMFFS.java
+compile8 src/mffs/VoltzMFFS.java
 compile8 src/mekanism/common/VoltzMekanism.java
 compile8 src/mekanism/common/BalancedTimeItems.java
 compile8 src/icbm/zhapin/VoltzICBM.java
@@ -93,7 +93,7 @@ compile8 src/codechicken/nei/VoltzNEI.java
 for f in build/cls/atomicscience/fanwusu/VoltzFixConfig.class \
          build/cls/micdoodle8/mods/galacticraft/core/VoltzGC.class \
          build/cls/andrew/powersuits/VoltzMagnetConfig.class \
-         build/cls/mffs/BalancedMFFS.class \
+         build/cls/mffs/VoltzMFFS.class \
          build/cls/mekanism/common/VoltzMekanism.class \
          build/cls/mekanism/common/BalancedTimeItems.class \
          build/cls/icbm/zhapin/VoltzICBM.class \
@@ -115,7 +115,8 @@ patch_one "MPS Addons"     "$MPSA_SRC" "MPSA-0.2.3-144_MPS-531+-patched.jar" \
           PatchMPSA.java build/cls/andrew/powersuits/VoltzMagnetConfig.class
 
 patch_one "MFFS"           "$MFFS_SRC" "MFFS_v3.1.0.175-patched.jar" \
-          PatchMFFS.java build/cls/mffs/BalancedMFFS.class
+          PatchMFFS.java build/cls/mffs/VoltzMFFS.class \
+          "mergedupe,stabilizedupe"
 
 patch_one "Mekanism"       "$MEK_SRC"  "Mekanism-v5.5.6.bugfix1-patched.jar" \
           PatchMek.java  "build/cls/mekanism/common/VoltzMekanism.class build/cls/mekanism/common/BalancedTimeItems.class" \
@@ -162,6 +163,20 @@ patch_one "immibis core"       "$ICORE_SRC" "immibis-core-55.1.6-patched.jar" \
 patch_one "NotEnoughItems"     "$NEI_SRC"   "NotEnoughItems 1.5.2.28-patched.jar" \
           PatchNEI.java   build/cls/codechicken/nei/VoltzNEI.class \
           "auth"
+
+# BalancedMFFS: a coremod, not a mod patch - the zone-flag and admin-logging feature. It is a
+# feature rather than a bug fix, so it ships separately from MFFS_v3.1.0.175-patched.jar and a
+# server can install the dupe fixes without it. Drop the jar in a server's coremods/.
+echo "building BalancedMFFS coremod"
+rm -rf build/bmffs && mkdir -p build/bmffs/META-INF
+"$JAVAC8" -nowarn -source 1.6 -target 1.6 -bootclasspath "$(dirname "$JAVAC8")/../jre/lib/rt.jar" \
+    -cp "$ASM:$FORGE" -d build/bmffs \
+    src/mffs/BalancedMFFS.java src/mffs/BalancedMFFSPlugin.java src/mffs/BalancedMFFSTransformer.java 2>&1 \
+    | grep -vE 'bootstrap class path|source value 1\.6|target value 1\.6|options|deprecat' || true
+[ -f build/bmffs/mffs/BalancedMFFSTransformer.class ] || { echo "BalancedMFFS did not compile" >&2; exit 1; }
+printf 'Manifest-Version: 1.0\r\nFMLCorePlugin: mffs.BalancedMFFSPlugin\r\n' > build/bmffs/META-INF/MANIFEST.MF
+( cd build/bmffs && jar cfm "$OLDPWD/BalancedMFFS.jar" META-INF/MANIFEST.MF mffs )
+echo "OK  wrote BalancedMFFS.jar  [zone flags + admin logging coremod]"
 
 # VoltzLoginGuard: a coremod (not a mod patch) - the FML login-sequence crash guard. Compiled
 # against ASM (using only the 4-arg MethodInsnNode, which FML 1.5.2's ASM 4.1 also has) and the
