@@ -10,10 +10,10 @@ server or breaks the economy: crashes, item duplication, packet handlers that tr
 client, and mechanics that simply do not work. Griefing, raiding and blowing up other
 people's bases are the point of the pack and are left alone.
 
-Each patch is selectable individually. The patcher refuses to write a jar if any selected
-patch did not find the exact call sites it expects, and a runtime harness exercises every
-injected helper on a live server — both plain Forge 1.5.2 and MCPC+ — so a patch cannot
-silently become a no-op.
+Each patch is selectable individually, and the patcher refuses to write a jar if any selected
+patch did not find the exact call sites it expects, so a patch cannot silently become a
+no-op. Helpers are exercised by a runtime harness on both a plain Forge 1.5.2 server and
+MCPC+; each section below says what was checked.
 
 | Mod | Patches |
 |---|---|
@@ -2017,9 +2017,10 @@ java -cp "$ASM:build/tool" PatchAS in.jar out.jar syncspawn,assemblerwear \
      build/cls/atomicscience/fanwusu/VoltzFixConfig.class
 ```
 
-The compiled `VoltzFixConfig.class` is always required as the fourth argument — every
-patch reads its settings from it. The patcher throws if any selected patch fails to
-apply, so it never writes a jar that silently did nothing.
+Each patcher takes its own helper class as the last argument — `VoltzFixConfig` here,
+`VoltzMFR` for MineFactoryReloaded, and so on — and injects it into the jar alongside the
+patched classes. The patcher throws if any selected patch fails to apply, so it never
+writes a jar that silently did nothing.
 
 `build.sh` also produces the three standalone jars — `BalancedMFFS.jar` and
 `VoltzLoginGuard.jar` (coremods) and `BalancedMekanismTimeItems.jar` (an ordinary mod) —
