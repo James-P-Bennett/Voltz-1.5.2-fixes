@@ -1533,6 +1533,30 @@ would hand out the shears for free — and both honour a `BlockBreakEvent`.
 Everything is reflective and gated on Bukkit being present, so on a plain Forge server no
 event exists, nothing is looked up and behaviour is unchanged.
 
+**Verified live on MCPC+**, not just by resolving the class names. The harness registers its
+own listener for each of the three events, straight from the mod rather than from a plugin,
+and runs every case twice: once letting the event through and once cancelling it.
+
+| Case | Event fires | Allowed | Cancelled |
+|---|---|---|---|
+| Lux Capacitor | `BlockPlaceEvent` | block really placed | no block placed |
+| Blade Launcher | `BlockBreakEvent` | leaves really broken | leaves still there |
+| Blink Drive | `PlayerTeleportEvent` | not cancelled | cancelled, player does not move |
+
+The "allowed" column is the control: without it a refusal could just be the helper quietly
+erroring. For the Blink Drive the move itself lands through `NetServerHandler`, which a
+headless stub connection cannot complete, so the observable control there is that the gate
+was passed uncancelled - the call immediately before `setPositionAndUpdate`.
+
+**Not verified: WorldGuard itself.** MCPC+ Legacy remaps Bukkit plugins with SpecialSource
+1.6 and ASM 4.1, and on Java 8 that combination cannot read the JDK's own class files, so
+*no* plugin loads at all - WorldGuard, WorldEdit and a two-class test plugin all fail
+identically with `Failed to remap class`. Swapping in ASM 5 gets past that and then breaks
+SpecialSource's API instead. **MCPC+ Legacy needs Java 7 for Bukkit plugin support**, which
+is worth knowing independently of this patch. What is proven here is the contract every
+protection plugin relies on: the event is fired, with the right player and position, and a
+cancellation is honoured.
+
 **Not patched:** the Plasma Cannon already damages blocks through
 `world.createExplosion(this, ...)`, which fires Bukkit's `EntityExplodeEvent`, and its entity
 damage is attributed to the shooter with `DamageSource.causeThrownDamage`. It needs nothing.
