@@ -205,3 +205,38 @@ rm -rf build/lg && mkdir -p build/lg/META-INF build/lg/voltz/loginguard
 printf 'Manifest-Version: 1.0\r\nFMLCorePlugin: voltz.loginguard.VoltzLoginGuard\r\n' > build/lg/META-INF/MANIFEST.MF
 ( cd build/lg && jar cfm "$OLDPWD/VoltzLoginGuard.jar" META-INF/MANIFEST.MF voltz )
 echo "OK  wrote VoltzLoginGuard.jar  [login guard coremod]"
+
+# VoltzVanillaParachest: a server coremod. No Galacticraft Parachest block stays in the world
+# (landings, placement and existing ones become vanilla chests), plus the server side chest guard. A
+# behaviour option, so it ships separately from the patched Galacticraft jar. Drop the jar in a
+# server's coremods/. VoltzVanillaParachest-shade.jar carries the same transformers and helper
+# (plus sources) without the loading plugin, for shading into another runtime patching mod.
+echo "building VoltzVanillaParachest coremod"
+rm -rf build/vp && mkdir -p build/vp/META-INF
+"$JAVAC8" -nowarn -source 1.6 -target 1.6 -bootclasspath "$(dirname "$JAVAC8")/../jre/lib/rt.jar" \
+    -cp "$ASM:$FORGE" -d build/vp \
+    src/voltz/parachest/VoltzVanillaParachest.java src/voltz/parachest/ParachestTransformer.java \
+    src/voltz/parachest/VanillaParachest.java src/voltz/chestguard/ChestGuardTransformer.java 2>&1 \
+    | grep -vE 'bootstrap class path|source value 1\.6|target value 1\.6|options|deprecat' || true
+[ -f build/vp/voltz/parachest/VanillaParachest.class ] || { echo "VoltzVanillaParachest did not compile" >&2; exit 1; }
+printf 'Manifest-Version: 1.0\r\nFMLCorePlugin: voltz.parachest.VoltzVanillaParachest\r\n' > build/vp/META-INF/MANIFEST.MF
+( cd build/vp && jar cfm "$OLDPWD/VoltzVanillaParachest.jar" META-INF/MANIFEST.MF voltz )
+rm -rf build/vps && mkdir -p build/vps/voltz/parachest build/vps/voltz/chestguard
+cp build/vp/voltz/parachest/ParachestTransformer.class build/vp/voltz/parachest/VanillaParachest.class \
+    src/voltz/parachest/ParachestTransformer.java src/voltz/parachest/VanillaParachest.java build/vps/voltz/parachest/
+cp build/vp/voltz/chestguard/ChestGuardTransformer.class src/voltz/chestguard/ChestGuardTransformer.java build/vps/voltz/chestguard/
+( cd build/vps && jar cf "$OLDPWD/VoltzVanillaParachest-shade.jar" voltz )
+echo "OK  wrote VoltzVanillaParachest.jar + VoltzVanillaParachest-shade.jar  [parachest -> vanilla chest]"
+
+# VoltzChestGuard: a CLIENT coremod. Stops a chest whose neighbour holds a non chest tile entity
+# from crashing the client. Goes in the launcher instance's coremods/, not the server's.
+echo "building VoltzChestGuard client coremod"
+rm -rf build/cg && mkdir -p build/cg/META-INF
+"$JAVAC8" -nowarn -source 1.6 -target 1.6 -bootclasspath "$(dirname "$JAVAC8")/../jre/lib/rt.jar" \
+    -cp "$ASM:$FORGE" -d build/cg \
+    src/voltz/chestguard/VoltzChestGuard.java src/voltz/chestguard/ChestGuardTransformer.java 2>&1 \
+    | grep -vE 'bootstrap class path|source value 1\.6|target value 1\.6|options|deprecat' || true
+[ -f build/cg/voltz/chestguard/ChestGuardTransformer.class ] || { echo "VoltzChestGuard did not compile" >&2; exit 1; }
+printf 'Manifest-Version: 1.0\r\nFMLCorePlugin: voltz.chestguard.VoltzChestGuard\r\n' > build/cg/META-INF/MANIFEST.MF
+( cd build/cg && jar cfm "$OLDPWD/VoltzChestGuard.jar" META-INF/MANIFEST.MF voltz )
+echo "OK  wrote VoltzChestGuard.jar  [client chest crash guard coremod]"

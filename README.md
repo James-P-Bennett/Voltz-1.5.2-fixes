@@ -3,7 +3,9 @@
 Bug fixes for mods in the **Voltz** modpack (Minecraft 1.5.2), applied as bytecode
 patches to the shipped jars.
 
-**These are server-side patches and they work against an unmodified Voltz client.**
+**These are server-side patches and they work against an unmodified Voltz client.** The one
+exception is `VoltzChestGuard.jar`, an optional client coremod that protects a player from a crash
+other servers can trigger.
 
 They are tailored towards a raiding server experience. What gets fixed is what breaks a
 server or breaks the economy: crashes, item duplication, packet handlers that trust the
@@ -32,6 +34,8 @@ MCPC+; each section below says what was checked.
 | [Galacticraft a0.1.36.410](#galacticraft-a0136410) | `dimauth` · `station` · `reach` · `rider` · `guis` · `nbtclamp` · `uechunk` |
 | [immibis microblocks 55.0.7](#immibis-microblocks-5507) | `dropstatic` · `placereach` |
 | [NotEnoughItems 1.5.2.28](#notenoughitems-15228) | `auth` |
+| [VoltzVanillaParachest (coremod)](#parachest-crash-galacticraft--vanilla-chest) | `landing` · `convert` · `placement` · `chestguard` |
+| [VoltzChestGuard (client coremod)](#parachest-crash-galacticraft--vanilla-chest) | `chestguard` |
 
 ---
 
@@ -1841,8 +1845,9 @@ tile packets by client coordinates, loading whatever chunk they name.
 
 </details>
 
-**Note.** The Parachest's adjacency behaviour was examined and is **not** a dupe — it was
-checked and deliberately left alone.
+**Note.** The Parachest's own adjacency code is **not** a dupe and is left alone in this jar. A
+Parachest beside a *vanilla* chest is a crash, fixed separately by the optional
+[VoltzVanillaParachest](#parachest-crash-galacticraft--vanilla-chest) coremod.
 
 ---
 
@@ -1956,6 +1961,87 @@ class also passes an ASM verifier.
 
 ---
 
+## Parachest crash (Galacticraft + vanilla chest)
+
+<details>
+<summary><b>A Parachest beside a vanilla chest crashes the server and every client in range</b></summary>
+
+**The bug.** `GCCoreBlockParachest` extends the vanilla `BlockChest`. A vanilla chest pairs with
+any neighbour whose block is a `BlockChest` of the same kind (`TileEntityChest.func_94044_a`), so
+it pairs with a Parachest, then casts the Parachest's tile entity to `TileEntityChest` in
+`checkForAdjacentChests`. The cast throws `ClassCastException: GCCoreTileEntityParachest cannot be
+cast to TileEntityChest` from the chest's tick ("Ticking tile entity"). On a stock server that
+stops the server. On a server that survives it, every client with the chunk loaded crashes, and
+crashes again on every login while that chunk is in range. Placing a Parachest item beside a
+chest is enough; so is a parachest landing beside one.
+
+The Parachest's own neighbour test is exact (`instanceof GCCoreBlockParachest`), so the crash only
+runs one way: vanilla chest into Parachest.
+
+**The fix.** `VoltzVanillaParachest.jar`, a server coremod built from `src/voltz/parachest/`. It
+transforms three Galacticraft classes at load time so no Parachest block stays in the world, and
+runs the client guard below on the server's own `TileEntityChest`:
+
+- `landing`: `GCCoreEntityParaChest.placeChest` puts the cargo in vanilla chests instead of
+  placing a Parachest.
+- `convert`: an existing Parachest turns itself into a vanilla chest on its first server tick,
+  so a world that already holds one is cleaned up. Its items move with it (it is emptied first,
+  so its own break code drops nothing).
+- `placement`: `GCCoreBlockParachest.canPlaceBlockAt` refuses a spot beside any chest, so other
+  players never receive a Parachest next to a chest, even for the one tick before `convert` runs.
+- `chestguard`: the server's `TileEntityChest` treats a neighbour whose tile entity is not a
+  `TileEntityChest` as no neighbour, so the server cannot crash in that window.
+
+Cargo goes where a player could put a chest. A chest joins a lone single chest beside it into an
+ordinary double chest, but never makes a three wide chest and never sits beside a non vanilla
+chest block; if the spot is not valid it moves up to the first one that is. Cargo past 27 stacks
+goes into a second chest beside the first (its own double chest), or into further chests above
+when the first joined someone else's; anything left drops as items. A landing with no cargo still
+leaves one empty chest, as a stock landing leaves an empty Parachest.
+
+Every hook falls back to stock behaviour if a lookup fails before the world has changed, and once
+a block has changed anything not stored is dropped, so cargo is never lost or doubled. Minecraft
+is reached only by reflection on SRG names, and the transformer matches Galacticraft's own names plus
+the obfuscated, SRG and MCP names of the two overridden Minecraft methods, so it applies on plain
+Forge and on MCPC+.
+
+**The placer's own client.** A stock client predicts a block placement locally before the server
+answers, so a player who places a Parachest beside a chest can still crash their own client once;
+the server refuses the placement, so the chunk is clean when they log back in, and nobody else
+ever sees it. `VoltzChestGuard.jar` closes that last gap on the client.
+
+**Client jar.** `VoltzChestGuard.jar` (from `src/voltz/chestguard/`) is the same `chestguard`
+transform as a client coremod. It goes in the launcher instance's `coremods/` folder and stops
+the crash on any server, including ones that do not run this repo's jars.
+
+**Shading.** `VoltzVanillaParachest-shade.jar` holds `ParachestTransformer`, `VanillaParachest`
+and `ChestGuardTransformer` (classes and sources) without the loading plugin, for a server that
+already runs its own runtime patching mod. Call `ParachestTransformer.patch(name, bytes)` from
+that mod's transformer for every class `ParachestTransformer.handles(name)` accepts, and
+`ChestGuardTransformer.patch(bytes)` for `net.minecraft.tileentity.TileEntityChest` (obfuscated
+`apy`). Relocating the package is safe: the injected hook calls whatever package
+`VanillaParachest` was relocated to, read from the class itself at runtime.
+
+**Install.** Drop `VoltzVanillaParachest.jar` in the server's `coremods/` folder, next to
+Galacticraft (stock or patched). On boot it logs `[VoltzChestGuard] guarded 4 neighbour cast(s)`
+and `[VoltzVanillaParachest] patched ...` for the three Galacticraft classes, and each conversion
+logs `converted a parachest at x,y,z`.
+
+**Verified** on a plain Forge 1.5.2 server with the full Voltz mod set, by a harness that builds
+each case in a live world: a Parachest holding items placed beside a single chest (converted,
+joined into a double, items kept), beside a double chest (moved up, no three wide chest, items
+kept), the placement check beside a chest and in the open, a landing with 40 stacks in the open (own
+double chest, nothing dropped), a landing with 30 stacks beside a single chest (joined, overflow in a
+chest above), an empty landing, and no Parachest block left anywhere: **16/16 PASS**. The same
+harness on the same server **without** the coremod reproduces the crash: `Ticking tile entity`,
+`ClassCastException`, server stopped. Every transformed class (the three Galacticraft classes and
+the client's `TileEntityChest`) passes an ASM verifier. Not run on MCPC+ (no 1.5.2 MCPC+ server
+was available), and the client jar was verified offline only.
+
+</details>
+
+---
+
 ## enumclamp (Mekanism, MFFS, Modular Powersuits, ICBM Explosion)
 
 <details>
@@ -2022,9 +2108,10 @@ Each patcher takes its own helper class as the last argument — `VoltzFixConfig
 patched classes. The patcher throws if any selected patch fails to apply, so it never
 writes a jar that silently did nothing.
 
-`build.sh` also produces the three standalone jars — `BalancedMFFS.jar` and
-`VoltzLoginGuard.jar` (coremods) and `BalancedMekanismTimeItems.jar` (an ordinary mod) —
-which are built from `src/` rather than patched out of a mod jar.
+`build.sh` also produces the standalone jars — `BalancedMFFS.jar`, `VoltzLoginGuard.jar` and
+`VoltzVanillaParachest.jar` (server coremods), `VoltzChestGuard.jar` (a client coremod),
+`BalancedMekanismTimeItems.jar` (an ordinary mod) and `VoltzVanillaParachest-shade.jar` (classes
+for shading) — which are built from `src/` rather than patched out of a mod jar.
 
 </details>
 
@@ -2058,15 +2145,18 @@ Three of them are **coremods** and belong in the server's `coremods/` folder ins
 | `immibis-microblocks-55.0.7.jar` | `immibis-microblocks-55.0.7-patched.jar` |
 | `NotEnoughItems 1.5.2.28.jar` | `NotEnoughItems 1.5.2.28-patched.jar` |
 
-`BalancedMFFS.jar` and `VoltzLoginGuard.jar` are coremods too, and are additions rather than
-replacements. `BalancedMFFS.jar` is the optional zone-flag and admin-logging feature; leave it
+`BalancedMFFS.jar`, `VoltzLoginGuard.jar` and `VoltzVanillaParachest.jar` are coremods too, and
+are additions rather than replacements. `VoltzVanillaParachest.jar` keeps Parachest blocks out of
+the world so a Parachest beside a chest cannot crash anyone; leave it out and Parachests behave as
+stock. `BalancedMFFS.jar` is the optional zone-flag and admin-logging feature; leave it
 out and MFFS behaves exactly as stock apart from the two dupe fixes.
 
 `BalancedMekanismTimeItems.jar` is an ordinary mod and goes in `mods/`, also as an addition.
 It is the optional Stopwatch and Weather Orb policy; leave it out and those two items behave
 as stock, still covered by the `timeitems` exploit fix in the patched Mekanism jar.
 
-**Clients need no changes at all.** Players keep the unmodified Voltz pack — nothing to
+**Clients need no changes at all.** (`VoltzChestGuard.jar` is an optional client extra, not a
+requirement.) Players keep the unmodified Voltz pack — nothing to
 download, nothing to install, no launcher changes. Every patch lives in code that only
 runs on the server:
 
