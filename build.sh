@@ -228,6 +228,19 @@ cp build/vp/voltz/chestguard/ChestGuardTransformer.class src/voltz/chestguard/Ch
 ( cd build/vps && jar cf "$OLDPWD/VoltzVanillaParachest-shade.jar" voltz )
 echo "OK  wrote VoltzVanillaParachest.jar + VoltzVanillaParachest-shade.jar  [parachest -> vanilla chest]"
 
+# VoltzMekNet-shade.jar: the Mekanism energy network crash guard (refresh() on a cable whose
+# world is gone), as a transformer plus helper with sources, for shading into another runtime
+# patching mod. The patched Mekanism jar above already carries the same fix (cablereload).
+echo "building VoltzMekNet shade jar"
+rm -rf build/mn build/mns && mkdir -p build/mn build/mns/voltz/meknet
+"$JAVAC8" -nowarn -source 1.6 -target 1.6 -bootclasspath "$(dirname "$JAVAC8")/../jre/lib/rt.jar" \
+    -cp "$ASM:$FORGE" -d build/mn src/voltz/meknet/MekNetTransformer.java src/voltz/meknet/MekNetFix.java 2>&1 \
+    | grep -vE 'bootstrap class path|source value 1\.6|target value 1\.6|options|deprecat|unchecked' || true
+[ -f build/mn/voltz/meknet/MekNetFix.class ] || { echo "VoltzMekNet did not compile" >&2; exit 1; }
+cp build/mn/voltz/meknet/*.class src/voltz/meknet/*.java build/mns/voltz/meknet/
+( cd build/mns && jar cf "$OLDPWD/VoltzMekNet-shade.jar" voltz )
+echo "OK  wrote VoltzMekNet-shade.jar  [Mekanism energy network crash guard, for shading]"
+
 # VoltzChestGuard: a CLIENT coremod. Stops a chest whose neighbour holds a non chest tile entity
 # from crashing the client. Goes in the launcher instance's coremods/, not the server's.
 echo "building VoltzChestGuard client coremod"

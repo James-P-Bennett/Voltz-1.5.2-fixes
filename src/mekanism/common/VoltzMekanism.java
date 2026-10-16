@@ -73,6 +73,52 @@ public class VoltzMekanism {
         return false;
     }
 
+    /**
+     * Called at the head of EnergyNetwork.refresh(). A chunk unload, or TickThreading, can leave a
+     * cable in the network's set whose world is already gone (worldObj null) without the cable
+     * being invalidated. refresh() then dereferences the missing world: a NullPointerException in
+     * Object3D.get that takes down the whole server tick. Cables without a world are dropped
+     * here, as refresh() already drops invalidated ones; a cable rejoins its network when its
+     * chunk loads again. The periodic heal made this far more likely, because it runs refresh()
+     * every few seconds on every network.
+     */
+    public static void pruneCables(Object network) {
+        try {
+            java.util.Set cables = (java.util.Set) field(network, "cables");
+            java.util.Iterator it = cables.iterator();
+            while (it.hasNext()) {
+                Object cable = it.next();
+                if (cable == null || field(cable, "field_70331_k") == null) {   // TileEntity.worldObj
+                    it.remove();
+                }
+            }
+        } catch (Throwable t) {
+            rateLog("energy network cable prune skipped: " + t);
+        }
+    }
+
+    /**
+     * Called from EnergyNetwork.tick() when shouldRefreshNetwork() says so, in place of a bare
+     * refresh(). The heal is best effort, so nothing it throws may reach the server tick.
+     */
+    public static void refreshNetwork(Object network) {
+        try {
+            call(network, "refresh", new Object[0]);
+        } catch (Throwable t) {
+            Throwable cause = t instanceof java.lang.reflect.InvocationTargetException ? t.getCause() : t;
+            rateLog("energy network refresh skipped: " + cause);
+        }
+    }
+
+    private static void rateLog(String msg) {
+        long now = System.currentTimeMillis();
+        Long last = (Long) lastLog.get("#energynetwork");
+        if (last == null || now - last.longValue() >= LOG_INTERVAL_MS) {
+            lastLog.put("#energynetwork", Long.valueOf(now));
+            System.out.println(TAG + msg);
+        }
+    }
+
     // ---------------------------------------------- BuildCraft power API bridge
 
     private static Boolean bcPower;

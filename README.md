@@ -758,6 +758,40 @@ is disturbed by hand.
 **The patch.** The network rescans its acceptors on a timer (once every 60 ticks per network,
 tracked in `VoltzMekanism.shouldRefreshNetwork`), so a reloaded tile is picked up on its own.
 
+**Crash guard.** A chunk unload, notably under TickThreading, can leave a cable in a network
+whose world is already gone, without invalidating it. `refresh()` on that network then throws
+out of the server tick and takes the server down:
+
+```
+java.lang.NullPointerException
+    at mekanism.api.Object3D.get(Object3D.java:75)
+    at mekanism.common.CableUtils.getConnectedEnergyAcceptors(CableUtils.java:33)
+    at mekanism.common.EnergyNetwork.refresh(EnergyNetwork.java:196)
+    at mekanism.common.EnergyNetwork.tick(EnergyNetwork.java)
+```
+
+Stock Mekanism rarely calls `refresh()` at that moment; the periodic rescan above calls it every
+few seconds on every network, which made the crash common on a live server. `refresh()` now
+starts with `VoltzMekanism.pruneCables(this)`, which drops cables with no world (as `refresh()`
+already drops invalidated ones; a cable rejoins when its chunk loads), and the rescan goes
+through `VoltzMekanism.refreshNetwork`, which never lets an exception reach the server tick.
+
+**Shading.** `VoltzMekNet-shade.jar` holds the same guard as `MekNetTransformer` and
+`MekNetFix` (classes and sources), for a server whose own runtime patching mod applies the
+rescan. Call `MekNetTransformer.patch(name, bytes)` for the class `MekNetTransformer.handles(name)`
+accepts (`mekanism.common.EnergyNetwork`), after the mod's own edit of that class. It adds the
+prune to the head of `refresh()` and turns any direct `refresh()` call in `tick()` into the safe
+one; both are skipped if already present. Relocating the package is safe, since the hook owner
+is read from `MekNetFix` at runtime. List the package in the coremod's `@TransformerExclusions`
+(or register `MekNetTransformer` itself as a transformer class): calling `patch()` from inside
+another transformer otherwise loads the class mid transform and FML fails with a
+`ClassCircularityError`.
+
+**Verified** on a plain Forge 1.5.2 server by a harness that builds a two cable network,
+clears one cable's world the way an unload leaves it, and ticks the network 70 times. The
+previous patched jar threw the NullPointerException; the new patched jar, and the previous jar
+with `MekNetTransformer` shaded under another package into a test coremod, both pass 5/5.
+
 </details>
 
 ---
@@ -2108,10 +2142,11 @@ Each patcher takes its own helper class as the last argument — `VoltzFixConfig
 patched classes. The patcher throws if any selected patch fails to apply, so it never
 writes a jar that silently did nothing.
 
-`build.sh` also produces the standalone jars — `BalancedMFFS.jar`, `VoltzLoginGuard.jar` and
-`VoltzVanillaParachest.jar` (server coremods), `VoltzChestGuard.jar` (a client coremod),
-`BalancedMekanismTimeItems.jar` (an ordinary mod) and `VoltzVanillaParachest-shade.jar` (classes
-for shading) — which are built from `src/` rather than patched out of a mod jar.
+`build.sh` also produces standalone jars, built from `src/` rather than patched out of a mod
+jar: `BalancedMFFS.jar`, `VoltzLoginGuard.jar` and `VoltzVanillaParachest.jar` (server
+coremods), `VoltzChestGuard.jar` (a client coremod), `BalancedMekanismTimeItems.jar` (an
+ordinary mod), and `VoltzVanillaParachest-shade.jar` and `VoltzMekNet-shade.jar` (classes for
+shading).
 
 </details>
 

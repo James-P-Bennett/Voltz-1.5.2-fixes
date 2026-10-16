@@ -117,7 +117,7 @@ public class PatchMek {
                                                 "aebridge." + CABLE_UTILS + ".getConnectedEnergyAcceptors",
                                                 "aebridge." + ENERGY_NET + ".getEnergyAcceptors",
                                                 "aebridge." + ENERGY_NET + ".emit" });
-        sites.put("cablereload", new String[] { "cablereload.tick" });
+        sites.put("cablereload", new String[] { "cablereload.tick", "cablereload.prune" });
         for (String p : selected)
             for (String s : sites.get(p))
                 if (!applied.contains(s)) throw new IllegalStateException(p + " did not apply: " + s);
@@ -173,14 +173,31 @@ public class PatchMek {
      * a working cable-to-AE link silently dies until a neighbouring block is changed. The network
      * itself is ticked by EnergyNetworkRegistry, so at the top of EnergyNetwork.tick() insert
      *
-     *     if (VoltzMekanism.shouldRefreshNetwork(this)) this.refresh();
+     *     if (VoltzMekanism.shouldRefreshNetwork(this)) VoltzMekanism.refreshNetwork(this);
      *
-     * which re-scans acceptors every few seconds and heals the link.
+     * which re-scans acceptors every few seconds and heals the link; refreshNetwork never throws.
+     * And at the head of EnergyNetwork.refresh() insert
+     *
+     *     VoltzMekanism.pruneCables(this);
+     *
+     * which drops cables whose world is gone. refresh() on such a cable (left behind by a chunk
+     * unload under TickThreading) throws an NPE in Object3D.get that crashed a live server; the
+     * periodic rescan made that far more likely, and stock callers of refresh() can hit it too.
      */
     static byte[] patchCableReload(byte[] in) {
         ClassNode cn = read(in);
         for (Object mo : cn.methods) {
             MethodNode m = (MethodNode) mo;
+            if (m.name.equals("refresh") && m.desc.equals("()V")) {
+                InsnList p = new InsnList();
+                p.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                p.add(new MethodInsnNode(Opcodes.INVOKESTATIC, FIX, "pruneCables",
+                        "(Ljava/lang/Object;)V", false));
+                m.instructions.insert(p);
+                m.maxStack = Math.max(m.maxStack, 1);
+                applied.add("cablereload.prune");
+                continue;
+            }
             if (!m.name.equals("tick") || !m.desc.equals("()V")) continue;
             LabelNode skip = new LabelNode();
             InsnList g = new InsnList();
@@ -189,7 +206,8 @@ public class PatchMek {
                     "(Ljava/lang/Object;)Z", false));
             g.add(new JumpInsnNode(Opcodes.IFEQ, skip));
             g.add(new VarInsnNode(Opcodes.ALOAD, 0));
-            g.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, ENERGY_NET, "refresh", "()V", false));
+            g.add(new MethodInsnNode(Opcodes.INVOKESTATIC, FIX, "refreshNetwork",
+                    "(Ljava/lang/Object;)V", false));
             g.add(skip);
             m.instructions.insert(g);
             m.maxStack = Math.max(m.maxStack, 1);
