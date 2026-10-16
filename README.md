@@ -776,6 +776,14 @@ starts with `VoltzMekanism.pruneCables(this)`, which drops cables with no world 
 already drops invalidated ones; a cable rejoins when its chunk loads), and the rescan goes
 through `VoltzMekanism.refreshNetwork`, which never lets an exception reach the server tick.
 
+The world can also be present but dead. TickThreading clears the fields of an unloaded world, so
+a cable left in it keeps a `worldObj` whose provider is null, and `Object3D.get` throws at the
+same line. Catching that alone is not enough: the live server logged the skipped refresh over a
+thousand times, because the dead cable never leaves the network, and a refresh that throws part
+way leaves the network with only some of its acceptors, so machines on it can go unpowered. So
+the prune also runs the exact acceptor scan `refresh()` is about to run on each cable and drops
+any cable it throws on. Log lines now name the exception's top frames.
+
 **Shading.** `VoltzMekNet-shade.jar` holds the same guard as `MekNetTransformer` and
 `MekNetFix` (classes and sources), for a server whose own runtime patching mod applies the
 rescan. Call `MekNetTransformer.patch(name, bytes)` for the class `MekNetTransformer.handles(name)`
@@ -788,9 +796,11 @@ another transformer otherwise loads the class mid transform and FML fails with a
 `ClassCircularityError`.
 
 **Verified** on a plain Forge 1.5.2 server by a harness that builds a two cable network,
-clears one cable's world the way an unload leaves it, and ticks the network 70 times. The
-previous patched jar threw the NullPointerException; the new patched jar, and the previous jar
-with `MekNetTransformer` shaded under another package into a test coremod, both pass 5/5.
+clears one cable's world the way an unload leaves it, and ticks the network 70 times, then
+gives a cable a dead world (every field null) next to a machine and ticks it 70 more. The
+first patched jar threw the NullPointerException. The second caught it but logged a skipped
+refresh on every rescan and kept the dead cable (8/9). The current patched jar, and the old
+jar with `MekNetTransformer` shaded under another package into a test coremod, both pass 9/9.
 
 </details>
 

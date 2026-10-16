@@ -85,16 +85,71 @@ public class VoltzMekanism {
     public static void pruneCables(Object network) {
         try {
             java.util.Set cables = (java.util.Set) field(network, "cables");
+            int dropped = 0;
+            Throwable why = null;
             java.util.Iterator it = cables.iterator();
             while (it.hasNext()) {
                 Object cable = it.next();
-                if (cable == null || field(cable, "field_70331_k") == null) {   // TileEntity.worldObj
+                Throwable t = cable == null || field(cable, "field_70331_k") == null   // TileEntity.worldObj
+                        ? NO_WORLD : scanCable(cable);
+                if (t != null) {
                     it.remove();
+                    dropped++;
+                    if (why == null) why = t;
                 }
             }
+            if (dropped > 0) {
+                rateLog("dropped " + dropped + " dead cable(s) from an energy network: " + describe(why));
+            }
         } catch (Throwable t) {
-            rateLog("energy network cable prune skipped: " + t);
+            rateLog("energy network cable prune skipped: " + describe(t));
         }
+    }
+
+    private static final Throwable NO_WORLD = new IllegalStateException("cable has no world");
+    private static Method scanMethod;
+    private static boolean scanUnavailable;
+
+    /**
+     * The world can also be present but dead: TickThreading clears the fields of an unloaded
+     * world, so a cable left in it keeps a worldObj whose provider is null and Object3D.get throws
+     * at the same line. A throw part way through refresh() also leaves the network with only some
+     * of its acceptors. So each cable gets the exact scan refresh() is about to run, and a cable it
+     * throws on is dropped. Returns what the scan threw, or null when it ran or cannot be found.
+     */
+    private static Throwable scanCable(Object cable) {
+        if (scanUnavailable) return null;
+        try {
+            if (scanMethod == null) {
+                Method[] ms = Class.forName("mekanism.common.CableUtils").getMethods();
+                for (int i = 0; i < ms.length; i++) {
+                    if (ms[i].getName().equals("getConnectedEnergyAcceptors") && ms[i].getParameterTypes().length == 1) {
+                        scanMethod = ms[i];
+                    }
+                }
+                if (scanMethod == null) throw new NoSuchMethodException("CableUtils.getConnectedEnergyAcceptors");
+            }
+            scanMethod.invoke(null, new Object[] { cable });
+            return null;
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            return e.getCause();
+        } catch (Throwable t) {
+            scanUnavailable = true;
+            rateLog("energy network cable scan check off: " + t);
+            return null;
+        }
+    }
+
+    /** the exception plus its top frames, so a log line says where it came from */
+    private static String describe(Throwable t) {
+        if (t == null) return "null";
+        if (t == NO_WORLD) return t.getMessage();
+        StringBuilder sb = new StringBuilder(String.valueOf(t));
+        StackTraceElement[] st = t.getStackTrace();
+        for (int i = 0; i < st.length && i < 4; i++) {
+            sb.append(i == 0 ? " at " : " < ").append(st[i]);
+        }
+        return sb.toString();
     }
 
     /**
@@ -106,7 +161,7 @@ public class VoltzMekanism {
             call(network, "refresh", new Object[0]);
         } catch (Throwable t) {
             Throwable cause = t instanceof java.lang.reflect.InvocationTargetException ? t.getCause() : t;
-            rateLog("energy network refresh skipped: " + cause);
+            rateLog("energy network refresh skipped: " + describe(cause));
         }
     }
 
